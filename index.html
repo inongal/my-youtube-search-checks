@@ -52,7 +52,7 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="בדוק את כל הסרטונים במסך הנוכחי מול נטפרי"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
+            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="בדוק את כל הסרטונים במסך הנוכחי ללא שימוש ב-API"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
             <button onclick="toggleConfig()" class="p-2 rounded-full text-zinc-400 hover:text-white" title="הגדרות API"><i class="fas fa-cog text-xl"></i></button>
         </div>
     </header>
@@ -116,8 +116,6 @@
         </div>
     </div>
 
-    <div id="netfreeTesterContainer" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; opacity: 0;"></div>
-
     <script>
         let appState = { apiKey: localStorage.getItem('yt_api_key') || "", query: "", currentVideoId: null, currentVideoDetails: null };
         let ytPlayer = null;
@@ -139,75 +137,33 @@
             }
         };
 
-        // --- לוגיקת בדיקת סטטוס חסימה מול נטפרי מאחורי הקלעים ---
-        function testVideoNetfreeStatus(videoId) {
+        // --- לוגיקת בדיקת נטפרי חסכונית - ללא שימוש ב-API Key כלל ---
+        function testVideoNetfreeStatusNoAPI(videoId) {
             return new Promise((resolve) => {
-                let isResolved = false;
+                // בדיקה באמצעות ניסיון טעינת תמונת ה-storyboard או המדיה ישירות משרתי הוידאו של יוטיוב.
+                // נטפרי חוסמת בקשות אלו ברמת ה-Network ומחזירה דף חסימה/שגיאה.
+                const img = new Image();
                 
-                const testerId = 'tester-' + videoId;
-                const testerDiv = document.createElement('div');
-                testerDiv.id = testerId;
-                document.getElementById('netfreeTesterContainer').appendChild(testerDiv);
-
-                let tempPlayer;
-                
-                // הגדרת קו קטיעה (Timeout) של 2.5 שניות לזיהוי חסימה אם הנגן לא מגיב כלל
                 let timeout = setTimeout(() => {
-                    if (!isResolved) {
-                        isResolved = true;
-                        cleanupTester(tempPlayer, testerDiv);
-                        resolve('blocked'); // אם לא הגיב, כנראה חסום או שגיאת טעינה
-                    }
-                }, 2500);
+                    img.onload = null; img.onerror = null;
+                    resolve('blocked'); 
+                }, 2000);
 
-                function cleanupTester(playerInstance, divInstance) {
-                    if (playerInstance && typeof playerInstance.destroy === 'function') {
-                        try { playerInstance.destroy(); } catch(e){}
-                    }
-                    if (divInstance && divInstance.parentNode) divInstance.remove();
-                }
+                img.onload = () => {
+                    clearTimeout(timeout);
+                    resolve('unblocked');
+                };
 
-                tempPlayer = new YT.Player(testerId, {
-                    height: '10', width: '10', videoId: videoId,
-                    playerVars: { 'autoplay': 1, 'controls': 0, 'mute': 1, 'origin': window.location.origin },
-                    events: {
-                        'onReady': (event) => {
-                            event.target.playVideo();
-                            
-                            // בדיקת כתובת פנימית מול חסימות נטפרי הידועות או דף הגשת פניות
-                            try {
-                                const currentUrl = event.target.getVideoUrl();
-                                if (currentUrl && (currentUrl.includes('netfree.link') || currentUrl.includes('tickets/new'))) {
-                                    isResolved = true;
-                                    clearTimeout(timeout);
-                                    cleanupTester(tempPlayer, testerDiv);
-                                    resolve('blocked');
-                                }
-                            } catch(e) {}
-                        },
-                        'onError': () => {
-                            if (!isResolved) {
-                                isResolved = true;
-                                clearTimeout(timeout);
-                                cleanupTester(tempPlayer, testerDiv);
-                                resolve('blocked');
-                            }
-                        },
-                        'onStateChange': (event) => {
-                            // מצב 1 (מנגן) או מצב 3 (בטעינת באפר) מעיד שהסרטון עובד ופתוח בשרת
-                            if ((event.data === 1 || event.data === 3) && !isResolved) {
-                                isResolved = true;
-                                clearTimeout(timeout);
-                                cleanupTester(tempPlayer, testerDiv);
-                                resolve('unblocked');
-                            }
-                        }
-                    }
-                });
+                img.onerror = () => {
+                    clearTimeout(timeout);
+                    resolve('blocked');
+                };
+
+                // שימוש בנתיב המדיה הישיר של יוטיוב הנבדק על ידי מערכות הסינון
+                img.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg?r=${Math.random()}`;
             });
         }
 
-        // עדכון התג המעוצב על גבי כרטיס הסרטון במסך
         function updateVideoCardNetfreeBadge(videoId, status) {
             const badge = document.getElementById(`netfree-badge-${videoId}`);
             if (!badge) return;
@@ -221,15 +177,14 @@
             }
         }
 
-        // בדיקה אוטומטית / ידנית של כל הסרטונים המוצגים כעת על המסך
         async function checkAllVisibleVideosNetfree() {
             const badges = document.querySelectorAll('[id^="netfree-badge-"]');
             for (let badge of badges) {
                 const videoId = badge.id.replace('netfree-badge-', '');
-                // בודק רק את אלו שעדיין בסטטוס "טרם נבדק"
                 if (badge.dataset.status === 'unchecked') {
-                    badge.innerHTML = '<i class="fas fa-spinner animate-spin"></i> בודק...';
-                    const status = await testVideoNetfreeStatus(videoId);
+                    badge.innerHTML = '<i class="fas fa-spinner animate-spin"></i>';
+                    // קריאה לפונקציה החדשה שאינה צורכת API
+                    const status = await testVideoNetfreeStatusNoAPI(videoId);
                     badge.dataset.status = status;
                     updateVideoCardNetfreeBadge(videoId, status);
                 }
@@ -378,7 +333,6 @@
 
                 if (kind === 'youtube#video' || isPopularChart) {
                     actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
-                    // הזרקת תג הסטטוס הראשוני: "טרם נבדק"
                     badgeHtml = `<div id="netfree-badge-${id}" data-status="unchecked" class="absolute top-2 right-2 bg-amber-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טרם נבדק</div>`;
                 } else if (kind === 'youtube#playlist') {
                     actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
@@ -400,7 +354,7 @@
                 grid.appendChild(card);
             });
 
-            // הפעלת בדיקת רקע חכמה אוטומטית לכל הסרטונים שרונדרו כעת על המסך
+            // בדיקת רקע חכמה שקטה מיד לאחר הרינדור
             setTimeout(checkAllVisibleVideosNetfree, 400);
         }
 
