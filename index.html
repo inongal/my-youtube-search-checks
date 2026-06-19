@@ -38,7 +38,7 @@
         <div class="flex-1 max-w-2xl flex items-center gap-2 px-4">
             <div class="flex w-full group relative">
                 <input type="text" id="searchInput" placeholder="חיפוש או הדבקת קישור יוטיוב..." 
-                    class="w-full rounded-r-full py-2 px-5 outline-none text-right" style="background-color: var(--bg-input); border: 1px solid var(--border-color); border-left: none; color: var(--text-primary);">
+                    class="w-full rounded-r-full py-2.5 px-5 outline-none text-right" style="background-color: var(--bg-input); border: 1px solid var(--border-color); border-left: none; color: var(--text-primary);">
                 <button onclick="performSearch()" class="border-r-0 rounded-l-full px-6 transition" style="background-color: var(--bg-surface); border: 1px solid var(--border-color);">
                     <i class="fas fa-search" style="color: var(--text-secondary);"></i>
                 </button>
@@ -139,7 +139,7 @@
             }
         };
 
-        // --- לוגיקת בדיקה מעודכנת המונעת באגים ומזהה 3 מצבים על פי ה-DOM וה-Src של נטפרי ---
+        // --- לוגיקת הבדיקה המדויקת והמתוקנת מול ה-DOM של נטפרי ---
         function testVideoNetfreeStatus(videoId) {
             return new Promise((resolve) => {
                 let isResolved = false;
@@ -151,13 +151,13 @@
 
                 let tempPlayer;
                 
-                // קו קטיעה (Timeout) של 3 שניות
+                // קו קטיעה (Timeout) של 2.8 שניות כדי לאפשר לנטפרי להזריק את דף החסימה
                 let timeout = setTimeout(() => {
                     if (!isResolved) {
                         isResolved = true;
                         checkIframeDOM();
                     }
-                }, 3000);
+                }, 2800);
 
                 function cleanup() {
                     if (tempPlayer && typeof tempPlayer.destroy === 'function') {
@@ -166,26 +166,31 @@
                     if (testerDiv && testerDiv.parentNode) testerDiv.remove();
                 }
 
-                // פונקציית ניתוח ה-DOM של ה-Iframe שנוצר
+                // פונקציה הסורקת ישירות את ה-Iframe המוזרק במכולה של הבדיקה הנוכחית
                 function checkIframeDOM() {
                     try {
-                        const iframeElement = document.getElementById(testerId);
+                        // שליפת ה-iframe שיוטיוב יצר בפועל בתוך ה-div שלנו
+                        const iframeElement = testerDiv.querySelector('iframe');
                         if (iframeElement && iframeElement.src) {
                             const srcUrl = iframeElement.src;
                             
+                            // 1. בדיקה מול קישור "טרם נבדק" (unknown-video)
                             if (srcUrl.includes('unknown-video')) {
                                 cleanup();
-                                resolve('unchecked_netfree'); // נשלח לבדיקה / טרם נבדק
+                                resolve('unchecked_netfree');
                                 return;
-                            } else if (srcUrl.includes('deny') || srcUrl.includes('tickets/new') || srcUrl.includes('block')) {
+                            } 
+                            // 2. בדיקה מול קישור חסום (deny או block)
+                            else if (srcUrl.includes('deny') || srcUrl.includes('block') || srcUrl.includes('tickets/new')) {
                                 cleanup();
-                                resolve('blocked'); // חסום בוודאות
+                                resolve('blocked');
                                 return;
                             }
                         }
-                    } catch(e) {}
+                    } catch(e) { console.error("DOM analysis failed", e); }
+                    
                     cleanup();
-                    resolve('blocked'); // ברירת מחדל בטוחה אם לא התקבל אירוע נגינה
+                    resolve('blocked'); // ברירת מחדל אם הנגן קרס או לא הגיב כלל
                 }
 
                 tempPlayer = new YT.Player(testerId, {
@@ -203,12 +208,12 @@
                             }
                         },
                         'onStateChange': (event) => {
-                            // אם הסרטון התחיל לנגן באופן תקין
+                            // אם התקבל אירוע שהווידאו מנגן (1) או בטעינה תקינה (3) - הסרטון פתוח!
                             if ((event.data === 1 || event.data === 3) && !isResolved) {
                                 isResolved = true;
                                 clearTimeout(timeout);
                                 cleanup();
-                                resolve('unblocked'); // פתוח
+                                resolve('unblocked');
                             }
                         }
                     }
@@ -216,7 +221,7 @@
             });
         }
 
-        // עדכון התגים המעוצבים על הכרטיס בהתאם לתוצאה המדויקת
+        // עדכון תצוגת התגים על הכרטיסים על פי 3 המצבים שנלמדו מצילומי המסך
         function updateVideoCardNetfreeBadge(videoId, status) {
             const badge = document.getElementById(`netfree-badge-${videoId}`);
             if (!badge) return;
@@ -228,8 +233,8 @@
                 badge.className = "absolute top-2 right-2 bg-rose-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
                 badge.innerHTML = '<i class="fas fa-ban"></i> חסום';
             } else if (status === 'unchecked_netfree') {
-                badge.className = "absolute top-2 right-2 bg-amber-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
-                badge.innerHTML = '<i class="fas fa-clock"></i> נשלח לבדיקה';
+                badge.className = "absolute top-2 right-2 bg-amber-600/95 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
+                badge.innerHTML = '<i class="fas fa-clock"></i> טרם נבדק';
             }
         }
 
@@ -388,8 +393,8 @@
 
                 if (kind === 'youtube#video' || isPopularChart) {
                     actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
-                    // סטטוס התחלתי נייטרלי: "טרם נבדק"
-                    badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טרם נבדק</div>`;
+                    // יצירת תג התחלתי רגיל לחלוטין
+                    badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טוען...</div>`;
                 } else if (kind === 'youtube#playlist') {
                     actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
                 }
