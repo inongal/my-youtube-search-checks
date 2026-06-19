@@ -52,7 +52,7 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
+            <button onclick="checkAllVisibleVideosNetfree(true)" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="בצע סריקה ובדיקה מחודשת לכל הסרטונים המוצגים"><i class="fas fa-sync ml-1"></i> סרוק מחדש</button>
             <button onclick="toggleConfig()" class="p-2 rounded-full text-zinc-400 hover:text-white" title="הגדרות API"><i class="fas fa-cog text-xl"></i></button>
         </div>
     </header>
@@ -139,10 +139,24 @@
             }
         };
 
-        // --- פונקציית האיתור המדויקת שקוראת את ה-src החיצוני של ה-iframe בחלונית האלמנטים ---
+        // --- פונקציות ניהול זיכרון ה-Cache המקומי לסטטוסים ---
+        const NetfreeCache = {
+            getMap: () => JSON.parse(localStorage.getItem('yt_netfree_cache') || '{}'),
+            set: (id, status) => {
+                let map = NetfreeCache.getMap();
+                map[id] = status;
+                localStorage.setItem('yt_netfree_cache', JSON.stringify(map));
+            }
+        };
+
+        // --- לוגיקת הבדיקה הדינמית בנגן עם פתרון הגודל הטקסטואלי העוקף קורס ---
         function testVideoNetfreeStatus(videoId) {
             return new Promise((resolve) => {
                 let isResolved = false;
+                
+                // טעינת בוחן תמונה אסינכרוני כדי לזהות מימדים במקרה של חסימה/המתנה
+                const imgCheck = new Image();
+                imgCheck.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg?v=${Math.random()}`;
                 
                 const testerId = 'tester-' + videoId;
                 const testerDiv = document.createElement('div');
@@ -151,13 +165,21 @@
 
                 let tempPlayer;
                 
-                // הוספת טיימר של 2.5 שניות הממתין לעדכון ה-DOM החיצוני של ה-iframe על ידי מערכת נטפרי
                 let timeout = setTimeout(() => {
                     if (!isResolved) {
                         isResolved = true;
-                        checkIframeSrcAttribute();
+                        cleanup();
+                        
+                        // פילוח חכם ללא שגיאות קורס: סרטון שטרם נבדק מוחזר על ידי שרת נטפרי ברזולוציה קבועה של 120x90
+                        if (imgCheck.complete && imgCheck.naturalWidth === 120 && imgCheck.naturalHeight === 90) {
+                            NetfreeCache.set(videoId, 'unchecked_netfree');
+                            resolve('unchecked_netfree');
+                        } else {
+                            NetfreeCache.set(videoId, 'blocked');
+                            resolve('blocked');
+                        }
                     }
-                }, 2500);
+                }, 2400);
 
                 function cleanup() {
                     if (tempPlayer && typeof tempPlayer.destroy === 'function') {
@@ -166,54 +188,27 @@
                     if (testerDiv && testerDiv.parentNode) testerDiv.remove();
                 }
 
-                // הדרך להגיע למיקום המדויק של הכתובת כפי שמופיעה בלשונית Elements
-                function checkIframeSrcAttribute() {
-                    try {
-                        // איתור ה-iframe שיוטיוב יצר והחליף בתוך ה-container
-                        const iframeElement = testerDiv.querySelector('iframe');
-                        
-                        if (iframeElement) {
-                            // שליפת ה-src ישירות ממאפייני האלמנט בדף (עוקף חסימות אבטחת קורס פנימיות)
-                            const currentSrc = iframeElement.getAttribute('src') || iframeElement.src || '';
-                            
-                            // בדיקת המחרוזות הייעודיות של נטפרי שלמדתנו מצילומי המסך
-                            if (currentSrc.includes('unknown-video')) {
-                                cleanup();
-                                resolve('unchecked_netfree'); // "טרם נבדק"
-                                return;
-                            } else if (currentSrc.includes('deny') || currentSrc.includes('block') || currentSrc.includes('tickets/new')) {
-                                cleanup();
-                                resolve('blocked'); // "חסום"
-                                return;
-                            }
-                        }
-                    } catch(e) { console.error("Error reading DOM attribute:", e); }
-                    
-                    cleanup();
-                    resolve('blocked'); // ברירת מחדל בטוחה
-                }
-
                 tempPlayer = new YT.Player(testerId, {
                     height: '10', width: '10', videoId: videoId,
                     playerVars: { 'autoplay': 1, 'controls': 0, 'mute': 1, 'origin': window.location.origin },
                     events: {
-                        'onReady': (event) => {
-                            event.target.playVideo();
-                        },
+                        'onReady': (event) => { event.target.playVideo(); },
                         'onError': () => {
                             if (!isResolved) {
                                 isResolved = true;
                                 clearTimeout(timeout);
-                                checkIframeSrcAttribute();
+                                cleanup();
+                                NetfreeCache.set(videoId, 'blocked');
+                                resolve('blocked');
                             }
                         },
                         'onStateChange': (event) => {
-                            // אם הסרטון התחיל לנגן בהצלחה (מצב 1 או 3) -> הוא פתוח ומאושר
                             if ((event.data === 1 || event.data === 3) && !isResolved) {
                                 isResolved = true;
                                 clearTimeout(timeout);
                                 cleanup();
-                                resolve('unblocked'); // "פתוח"
+                                NetfreeCache.set(videoId, 'unblocked');
+                                resolve('unblocked');
                             }
                         }
                     }
@@ -237,11 +232,21 @@
             }
         }
 
-        async function checkAllVisibleVideosNetfree() {
+        async function checkAllVisibleVideosNetfree(forceRefresh = false) {
             const badges = document.querySelectorAll('[id^="netfree-badge-"]');
+            const cacheMap = NetfreeCache.getMap();
+
             for (let badge of badges) {
                 const videoId = badge.id.replace('netfree-badge-', '');
-                if (badge.dataset.status === 'initial') {
+                
+                // אם הסרטון כבר נבדק בעבר והוא שמור בזיכרון, נציג אותו מייד ולא נריץ שוב
+                if (!forceRefresh && cacheMap[videoId]) {
+                    badge.dataset.status = cacheMap[videoId];
+                    updateVideoCardNetfreeBadge(videoId, cacheMap[videoId]);
+                    continue;
+                }
+
+                if (forceRefresh || badge.dataset.status === 'initial') {
                     badge.innerHTML = '<i class="fas fa-spinner animate-spin text-[10px]"></i>';
                     const status = await testVideoNetfreeStatus(videoId);
                     badge.dataset.status = status;
@@ -377,6 +382,8 @@
 
         function renderResults(items, isPopularChart) {
             const grid = document.getElementById('resultsGrid'); grid.innerHTML = '';
+            const cacheMap = NetfreeCache.getMap();
+
             items.forEach(item => {
                 const snip = item.snippet;
                 const kind = item.id.kind || (isPopularChart ? 'youtube#video' : '');
@@ -392,7 +399,22 @@
 
                 if (kind === 'youtube#video' || isPopularChart) {
                     actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
-                    badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טוען...</div>`;
+                    
+                    // אם הסטטוס כבר קיים במאגר הזיכרון המקומי, נטעין אותו מיידית ללא המתנה לבדיקת הרקע
+                    if (cacheMap[id]) {
+                        const cachedStatus = cacheMap[id];
+                        let colorClass = "bg-zinc-700/90";
+                        let labelText = "טוען...";
+                        let iconClass = "fa-question-circle";
+
+                        if (cachedStatus === 'unblocked') { colorClass = "bg-emerald-600/90"; labelText = "פתוח"; iconClass = "fa-check-circle"; }
+                        else if (cachedStatus === 'blocked') { colorClass = "bg-rose-600/90"; labelText = "חסום"; iconClass = "fa-ban"; }
+                        else if (cachedStatus === 'unchecked_netfree') { colorClass = "bg-amber-600/95"; labelText = "טרם נבדק"; iconClass = "fa-clock"; }
+
+                        badgeHtml = `<div id="netfree-badge-${id}" data-status="${cachedStatus}" class="absolute top-2 right-2 ${colorClass} text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas ${iconClass}"></i> ${labelText}</div>`;
+                    } else {
+                        badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טוען...</div>`;
+                    }
                 } else if (kind === 'youtube#playlist') {
                     actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
                 }
@@ -413,7 +435,8 @@
                 grid.appendChild(card);
             });
 
-            setTimeout(checkAllVisibleVideosNetfree, 400);
+            // הפעלת סריקת הרקע לסרטונים חדשים
+            setTimeout(() => { checkAllVisibleVideosNetfree(false); }, 400);
         }
 
         function openPlayer(id, title, thumb, channel, channelId) {
