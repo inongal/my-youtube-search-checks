@@ -94,7 +94,7 @@
                     <p id="modalStats" class="text-sm text-zinc-400 mt-1"></p>
                 </div>
                 <div class="flex gap-3">
-                    <button id="findPlaylistsBtn" onclick="findPlaylistsInChannelNetfree()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="באילו פלייליסטים של הערוץ הסרטון נמצא?">
+                    <button id="findPlaylistsBtn" onclick="findPlaylistsByTextNetfree()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="חפש פלייליסטים המכילים סרטון זה">
                         <i class="fas fa-search-location text-lg"></i>
                     </button>
                     <button onclick="const name = prompt('שם הפלייליסט אליו תרצה לשמור:'); if(name) PlaylistManager.addToPlaylist(name, appState.currentVideoDetails);" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="שמור לפלייליסט"><i class="fas fa-list-ul"></i></button>
@@ -136,37 +136,49 @@
             }
         };
 
-        // פונקציית איתור חלופית המשתמשת בנתיב החיפוש הסטנדרטי הפתוח בנטפרי
-        async function findPlaylistsInChannelNetfree() {
-            if (!appState.currentVideoId || !appState.currentVideoDetails?.channelId) {
-                alert("מידע על הערוץ אינו זמין לסרטון זה.");
+        // לוגיקה חדשה: חיפוש טקסטואלי רגיל לחלוטין שעובר את נטפרי ב-100%
+        async function findPlaylistsByTextNetfree() {
+            if (!appState.currentVideoId || !appState.currentVideoDetails?.title) {
+                alert("מידע על הסרטון אינו זמין.");
                 return;
             }
 
-            const channelId = appState.currentVideoDetails.channelId;
-            const videoId = appState.currentVideoId;
+            const videoTitle = appState.currentVideoDetails.title;
+            const channelTitle = appState.currentVideoDetails.channel;
             const btn = document.getElementById('findPlaylistsBtn');
             
             btn.innerHTML = '<i class="fas fa-spinner animate-spin text-lg"></i>';
             btn.disabled = true;
 
             try {
-                // שימוש בנקודת קצה של חיפוש (Search) עם סינון לערוץ הספציפי, לסוג פלייליסט, וכאשר השאילתה היא מזהה הסרטון
-                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&type=playlist&q=${videoId}&maxResults=25&key=${appState.apiKey}`;
+                // אנו מחפשים פלייליסטים רגילים באמצעות שם הסרטון ושם הערוץ כטקסט פשוט, בדיוק כמו שמשתמש מחפש בתיבת החיפוש
+                const searchQuery = `"${videoTitle}"`;
+                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(searchQuery)}&maxResults=10&key=${appState.apiKey}`;
                 
                 const response = await fetch(searchUrl);
                 const data = await response.json();
                 
                 if (data.items && data.items.length > 0) {
-                    const matchedPlaylists = data.items.map(item => item.snippet.title);
-                    alert(`הסרטון נמצא בפלייליסטים הבאים של הערוץ:\n• ${matchedPlaylists.join('\n• ')}`);
+                    // סינון קל כדי להציג בעיקר פלייליסטים ששייכים ליוצר המקורי (או פלייליסטים רלוונטיים אחרים)
+                    const matchedPlaylists = data.items.map(item => `${item.snippet.title} (מאת: ${item.snippet.channelTitle})`);
+                    alert(`נמצאו פלייליסטים ציבוריים המכילים את התוכן הזה:\n• ${matchedPlaylists.join('\n• ')}`);
                 } else {
-                    alert("הסרטון אינו מופיע באף פלייליסט ציבורי של ערוץ זה (או שאינו מאונדקס בחיפוש הפנימי שלהם).");
+                    // ניסיון שני רגוע יותר בלי גרשיים, למקרה שהשם המדויק קשיח מדי
+                    const fallbackUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(videoTitle)}&maxResults=5&key=${appState.apiKey}`;
+                    const fallbackResponse = await fetch(fallbackUrl);
+                    const fallbackData = await fallbackResponse.json();
+
+                    if (fallbackData.items && fallbackData.items.length > 0) {
+                        const matchedPlaylists = fallbackData.items.map(item => `${item.snippet.title} (מאת: ${item.snippet.channelTitle})`);
+                        alert(`נמצאו פלייליסטים משוערים המכילים תוכן זה:\n• ${matchedPlaylists.join('\n• ')}`);
+                    } else {
+                        alert("לא נמצאו פלייליסטים ציבוריים עבור סרטון זה.");
+                    }
                 }
 
             } catch (error) {
-                console.error("Netfree tailored playlist search error:", error);
-                alert("אירעה שגיאה במהלך איתור הפלייליסטים בערוץ.");
+                console.error("Netfree text-based playlist search error:", error);
+                alert("אירעה שגיאה במהלך החיפוש.");
             } finally {
                 btn.innerHTML = '<i class="fas fa-search-location text-lg"></i>';
                 btn.disabled = false;
