@@ -94,7 +94,7 @@
                     <p id="modalStats" class="text-sm text-zinc-400 mt-1"></p>
                 </div>
                 <div class="flex gap-3">
-                    <button id="findPlaylistsBtn" onclick="findPlaylistsByTextNetfree()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="חפש פלייליסטים המכילים סרטון זה">
+                    <button id="findPlaylistsBtn" onclick="findPlaylistsAndDisplayOnGrid()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="הצג פלייליסטים המכילים סרטון זה במסך הראשי">
                         <i class="fas fa-search-location text-lg"></i>
                     </button>
                     <button onclick="const name = prompt('שם הפלייליסט אליו תרצה לשמור:'); if(name) PlaylistManager.addToPlaylist(name, appState.currentVideoDetails);" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="שמור לפלייליסט"><i class="fas fa-list-ul"></i></button>
@@ -136,52 +136,102 @@
             }
         };
 
-        // לוגיקה חדשה: חיפוש טקסטואלי רגיל לחלוטין שעובר את נטפרי ב-100%
-        async function findPlaylistsByTextNetfree() {
+        // לוגיקת האיתור וההזרקה הישירה ל-resultsGrid במסך הראשי
+        async function findPlaylistsAndDisplayOnGrid() {
             if (!appState.currentVideoId || !appState.currentVideoDetails?.title) {
                 alert("מידע על הסרטון אינו זמין.");
                 return;
             }
 
             const videoTitle = appState.currentVideoDetails.title;
-            const channelTitle = appState.currentVideoDetails.channel;
             const btn = document.getElementById('findPlaylistsBtn');
             
             btn.innerHTML = '<i class="fas fa-spinner animate-spin text-lg"></i>';
             btn.disabled = true;
 
             try {
-                // אנו מחפשים פלייליסטים רגילים באמצעות שם הסרטון ושם הערוץ כטקסט פשוט, בדיוק כמו שמשתמש מחפש בתיבת החיפוש
+                // קריאת חיפוש טקסטואלית לפלייליסטים
                 const searchQuery = `"${videoTitle}"`;
-                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(searchQuery)}&maxResults=10&key=${appState.apiKey}`;
+                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(searchQuery)}&maxResults=20&key=${appState.apiKey}`;
                 
                 const response = await fetch(searchUrl);
-                const data = await response.json();
+                let data = await response.json();
                 
-                if (data.items && data.items.length > 0) {
-                    // סינון קל כדי להציג בעיקר פלייליסטים ששייכים ליוצר המקורי (או פלייליסטים רלוונטיים אחרים)
-                    const matchedPlaylists = data.items.map(item => `${item.snippet.title} (מאת: ${item.snippet.channelTitle})`);
-                    alert(`נמצאו פלייליסטים ציבוריים המכילים את התוכן הזה:\n• ${matchedPlaylists.join('\n• ')}`);
-                } else {
-                    // ניסיון שני רגוע יותר בלי גרשיים, למקרה שהשם המדויק קשיח מדי
-                    const fallbackUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(videoTitle)}&maxResults=5&key=${appState.apiKey}`;
+                // אם החיפוש המדויק קשוח מדי, נבצע נפילה חזרה לחיפוש גמיש יותר
+                if (!data.items || data.items.length === 0) {
+                    const fallbackUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(videoTitle)}&maxResults=12&key=${appState.apiKey}`;
                     const fallbackResponse = await fetch(fallbackUrl);
-                    const fallbackData = await fallbackResponse.json();
+                    data = await fallbackResponse.json();
+                }
 
-                    if (fallbackData.items && fallbackData.items.length > 0) {
-                        const matchedPlaylists = fallbackData.items.map(item => `${item.snippet.title} (מאת: ${item.snippet.channelTitle})`);
-                        alert(`נמצאו פלייליסטים משוערים המכילים תוכן זה:\n• ${matchedPlaylists.join('\n• ')}`);
-                    } else {
-                        alert("לא נמצאו פלייליסטים ציבוריים עבור סרטון זה.");
-                    }
+                // סגירת הנגן כדי להציג את התוצאות שהתקבלו ברקע
+                closePlayer();
+
+                // עדכון כותרת המסך הראשי
+                document.getElementById('sectionTitle').innerText = `פלייליסטים המכילים את: ${videoTitle}`;
+                
+                const grid = document.getElementById('resultsGrid');
+                grid.innerHTML = '';
+
+                if (data.items && data.items.length > 0) {
+                    data.items.forEach(item => {
+                        const snip = item.snippet;
+                        const playlistId = item.id.playlistId;
+                        const thumb = snip.thumbnails?.medium?.url || "";
+
+                        const card = document.createElement('div');
+                        card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col border border-zinc-800 hover:border-zinc-700";
+                        
+                        // בלחיצה על כרטיס הפלייליסט הציבורי, המערכת תטען את הסרטונים שבתוכו למסך הראשי
+                        card.setAttribute('onclick', `loadExternalPlaylistOnGrid('${playlistId}', '${snip.title.replace(/'/g, "\\'")}')`);
+                        card.innerHTML = `
+                            <div class="relative w-full aspect-video rounded-xl overflow-hidden mb-3 bg-zinc-800 flex items-center justify-center">
+                                ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover">` : '<i class="fas fa-list text-3xl text-zinc-600"></i>'}
+                                <div class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-bold flex items-center gap-1">
+                                    <i class="fas fa-list-ul"></i> פלייליסט
+                                </div>
+                            </div>
+                            <h3 class="font-semibold text-sm line-clamp-2" style="color: var(--text-primary);">${snip.title}</h3>
+                            <p class="text-xs text-zinc-400 mt-1">מאת: ${snip.channelTitle}</p>
+                        `;
+                        grid.appendChild(card);
+                    });
+                } else {
+                    grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">לא נמצאו פלייליסטים ציבוריים התואמים לסרטון זה.</div>';
                 }
 
             } catch (error) {
-                console.error("Netfree text-based playlist search error:", error);
-                alert("אירעה שגיאה במהלך החיפוש.");
+                console.error("Netfree tailored playlist rendering error:", error);
+                alert("אירעה שגיאה במהלך שליפת הנתונים.");
             } finally {
                 btn.innerHTML = '<i class="fas fa-search-location text-lg"></i>';
                 btn.disabled = false;
+            }
+        }
+
+        // פונקציית עזר להצגת סרטונים מתוך פלייליסט שנבחר
+        async function loadExternalPlaylistOnGrid(playlistId, title) {
+            document.getElementById('sectionTitle').innerText = `פלייליסט: ${title}`;
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12 animate-pulse">טוען סרטונים מתוך הרשימה...</div>';
+
+            try {
+                const res = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=25&playlistId=${playlistId}&key=${appState.apiKey}`);
+                const data = await res.json();
+
+                if (data.items && data.items.length > 0) {
+                    // המרת המבנה של פריטי פלייליסט למבנה תואם לפונקציית הרינדור הכללית
+                    const formattedItems = data.items.map(item => ({
+                        id: { kind: 'youtube#video', videoId: item.snippet.resourceId.videoId },
+                        snippet: item.snippet
+                    }));
+                    renderResults(formattedItems, false);
+                } else {
+                    grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">הפלייליסט ריק או חסום לצפייה.</div>';
+                }
+            } catch (error) {
+                console.error("Error loading playlist items:", error);
+                grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">שגיאה בטעינת סרטוני הרשימה.</div>';
             }
         }
 
@@ -245,11 +295,19 @@
                 let actionClick = "";
                 if (kind === 'youtube#video' || isPopularChart) {
                     actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
+                } else if (kind === 'youtube#playlist') {
+                    actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
                 }
 
                 card.setAttribute('onclick', actionClick);
                 card.innerHTML = `
-                    <img src="${thumb}" class="w-full aspect-video object-cover rounded-xl mb-3">
+                    <div class="relative w-full aspect-video rounded-xl overflow-hidden mb-3 bg-zinc-800">
+                        <img src="${thumb}" class="w-full h-full object-cover">
+                        ${kind === 'youtube#playlist' ? `
+                        <div class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-bold flex items-center gap-1">
+                            <i class="fas fa-list-ul"></i> פלייליסט
+                        </div>` : ''}
+                    </div>
                     <h3 class="font-semibold text-sm line-clamp-2" style="color: var(--text-primary);">${snip.title}</h3>
                     <p class="text-xs text-zinc-400 mt-1">${snip.channelTitle}</p>
                 `;
