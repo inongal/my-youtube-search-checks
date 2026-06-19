@@ -87,13 +87,14 @@
             <div class="aspect-video w-full bg-black">
                 <div id="playerFrame" class="w-full h-full"></div>
             </div>
+            
             <div class="p-6 flex justify-between items-center bg-zinc-900">
                 <div>
                     <h2 id="fullTitle" class="text-xl font-bold"></h2>
                     <p id="modalStats" class="text-sm text-zinc-400 mt-1"></p>
                 </div>
                 <div class="flex gap-3">
-                    <button id="findPlaylistsBtn" onclick="findPlaylistsForCurrentVideo()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="באילו פלייליסטים הסרטון נמצא?">
+                    <button id="findPlaylistsBtn" onclick="findPlaylistsInChannel()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="באילו פלייליסטים של הערוץ הסרטון נמצא?">
                         <i class="fas fa-search-location text-lg"></i>
                     </button>
                     <button onclick="const name = prompt('שם הפלייליסט אליו תרצה לשמור:'); if(name) PlaylistManager.addToPlaylist(name, appState.currentVideoDetails);" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="שמור לפלייליסט"><i class="fas fa-list-ul"></i></button>
@@ -135,21 +136,62 @@
             }
         };
 
-        function findPlaylistsForCurrentVideo() {
-            if (!appState.currentVideoId) return;
-            const playlists = PlaylistManager.getPlaylists();
-            const containingPlaylists = [];
+        // פונקציית האיתור החדשה שמחפשת בשרתי YouTube בתוך פלייליסטים של הערוץ
+        async function findPlaylistsInChannel() {
+            if (!appState.currentVideoId || !appState.currentVideoDetails?.channelId) {
+                alert("מידע על הערוץ אינו זמין לסרטון זה.");
+                return;
+            }
+
+            const channelId = appState.currentVideoDetails.channelId;
+            const videoId = appState.currentVideoId;
+            const btn = document.getElementById('findPlaylistsBtn');
             
-            Object.keys(playlists).forEach(name => {
-                if ((playlists[name] || []).some(v => v.id === appState.currentVideoId)) {
-                    containingPlaylists.push(name === 'Watch Later' ? 'צפייה בהמשך' : name);
+            // שינוי האייקון למצב טעינה
+            btn.innerHTML = '<i class="fas fa-spinner animate-spin text-lg"></i>';
+            btn.disabled = true;
+
+            try {
+                // 1. שליפת רשימת הפלייליסטים הציבוריים של הערוץ הנוכחי (עד 50 פלייליסטים)
+                const playlistsRes = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&channelId=${channelId}&maxResults=50&key=${appState.apiKey}`);
+                const playlistsData = await playlistsRes.json();
+                
+                if (!playlistsData.items || playlistsData.items.length === 0) {
+                    alert("לא נמצאו פלייליסטים ציבוריים בערוץ זה.");
+                    return;
                 }
-            });
-            
-            if (containingPlaylists.length > 0) {
-                alert(`הסרטון הנוכחי נמצא ברשימות הבאות:\n• ${containingPlaylists.join('\n• ')}`);
-            } else {
-                alert("הסרטון אינו מופיע באף אחת מרשימות ההשמעה שלך.");
+
+                const matchedPlaylists = [];
+
+                // 2. ריצה בלולאה ובדיקה עבור כל פלייליסט האם הסרטון קיים בתוכו
+                // (מגבלה קלה: בודק את 50 הסרטונים הראשונים בכל פלייליסט כדי לחסוך במכסות API וזמן טעינה)
+                const checkPromises = playlistsData.items.map(async (playlist) => {
+                    const playlistId = playlist.id;
+                    const itemsRes = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50&key=${appState.apiKey}`);
+                    const itemsData = await itemsRes.json();
+                    
+                    const hasVideo = (itemsData.items || []).some(item => item.snippet?.resourceId?.videoId === videoId);
+                    if (hasVideo) {
+                        matchedPlaylists.push(playlist.snippet.title);
+                    }
+                });
+
+                await Promise.all(checkPromises);
+
+                // 3. הצגת התוצאות למשתמש
+                if (matchedPlaylists.length > 0) {
+                    alert(`הסרטון נמצא בפלייליסטים הבאים של הערוץ:\n• ${matchedPlaylists.join('\n• ')}`);
+                } else {
+                    alert("הסרטון אינו מופיע באף פלייליסט ציבורי של ערוץ זה.");
+                }
+
+            } catch (error) {
+                console.error("Error finding channel playlists:", error);
+                alert("אירעה שגיאה במהלך סריקת הפלייליסטים של הערוץ.");
+            } finally {
+                // החזרת הכפתור למצבו הרגיל
+                btn.innerHTML = '<i class="fas fa-search-location text-lg"></i>';
+                btn.disabled = false;
             }
         }
 
@@ -205,13 +247,15 @@
                 const kind = item.id.kind || (isPopularChart ? 'youtube#video' : '');
                 const id = item.id.videoId || item.id.channelId || item.id.playlistId || item.id;
                 const thumb = snip.thumbnails?.medium?.url || "";
+                const channelId = snip.channelId || "";
 
                 const card = document.createElement('div');
                 card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col";
                 
                 let actionClick = "";
                 if (kind === 'youtube#video' || isPopularChart) {
-                    actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}')`;
+                    // מעבירים כעת גם את ה-channelId לפונקציית פתיחת הנגן
+                    actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
                 }
 
                 card.setAttribute('onclick', actionClick);
@@ -224,9 +268,10 @@
             });
         }
 
-        function openPlayer(id, title, thumb, channel) {
+        function openPlayer(id, title, thumb, channel, channelId) {
             appState.currentVideoId = id;
-            appState.currentVideoDetails = { id, title, thumbnail: thumb, channel };
+            // שמירת ה-channelId ב-AppState לשימוש פונקציית איתור הפלייליסטים
+            appState.currentVideoDetails = { id, title, thumbnail: thumb, channel, channelId };
             document.getElementById('modalTitle').innerText = title;
             document.getElementById('fullTitle').innerText = title;
             document.getElementById('modalStats').innerText = channel;
