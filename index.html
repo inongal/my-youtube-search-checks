@@ -52,7 +52,7 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="בדוק את כל הסרטונים במסך הנוכחי ללא שימוש ב-API"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
+            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="סרוק ובדוק את כל הסרטונים המוצגים"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
             <button onclick="toggleConfig()" class="p-2 rounded-full text-zinc-400 hover:text-white" title="הגדרות API"><i class="fas fa-cog text-xl"></i></button>
         </div>
     </header>
@@ -116,6 +116,8 @@
         </div>
     </div>
 
+    <div id="netfreeTesterContainer" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; opacity: 0;"></div>
+
     <script>
         let appState = { apiKey: localStorage.getItem('yt_api_key') || "", query: "", currentVideoId: null, currentVideoDetails: null };
         let ytPlayer = null;
@@ -137,33 +139,84 @@
             }
         };
 
-        // --- לוגיקת בדיקת נטפרי חסכונית - ללא שימוש ב-API Key כלל ---
-        function testVideoNetfreeStatusNoAPI(videoId) {
+        // --- לוגיקת בדיקה מעודכנת המונעת באגים ומזהה 3 מצבים על פי ה-DOM וה-Src של נטפרי ---
+        function testVideoNetfreeStatus(videoId) {
             return new Promise((resolve) => {
-                // בדיקה באמצעות ניסיון טעינת תמונת ה-storyboard או המדיה ישירות משרתי הוידאו של יוטיוב.
-                // נטפרי חוסמת בקשות אלו ברמת ה-Network ומחזירה דף חסימה/שגיאה.
-                const img = new Image();
+                let isResolved = false;
                 
+                const testerId = 'tester-' + videoId;
+                const testerDiv = document.createElement('div');
+                testerDiv.id = testerId;
+                document.getElementById('netfreeTesterContainer').appendChild(testerDiv);
+
+                let tempPlayer;
+                
+                // קו קטיעה (Timeout) של 3 שניות
                 let timeout = setTimeout(() => {
-                    img.onload = null; img.onerror = null;
-                    resolve('blocked'); 
-                }, 2000);
+                    if (!isResolved) {
+                        isResolved = true;
+                        checkIframeDOM();
+                    }
+                }, 3000);
 
-                img.onload = () => {
-                    clearTimeout(timeout);
-                    resolve('unblocked');
-                };
+                function cleanup() {
+                    if (tempPlayer && typeof tempPlayer.destroy === 'function') {
+                        try { tempPlayer.destroy(); } catch(e){}
+                    }
+                    if (testerDiv && testerDiv.parentNode) testerDiv.remove();
+                }
 
-                img.onerror = () => {
-                    clearTimeout(timeout);
-                    resolve('blocked');
-                };
+                // פונקציית ניתוח ה-DOM של ה-Iframe שנוצר
+                function checkIframeDOM() {
+                    try {
+                        const iframeElement = document.getElementById(testerId);
+                        if (iframeElement && iframeElement.src) {
+                            const srcUrl = iframeElement.src;
+                            
+                            if (srcUrl.includes('unknown-video')) {
+                                cleanup();
+                                resolve('unchecked_netfree'); // נשלח לבדיקה / טרם נבדק
+                                return;
+                            } else if (srcUrl.includes('deny') || srcUrl.includes('tickets/new') || srcUrl.includes('block')) {
+                                cleanup();
+                                resolve('blocked'); // חסום בוודאות
+                                return;
+                            }
+                        }
+                    } catch(e) {}
+                    cleanup();
+                    resolve('blocked'); // ברירת מחדל בטוחה אם לא התקבל אירוע נגינה
+                }
 
-                // שימוש בנתיב המדיה הישיר של יוטיוב הנבדק על ידי מערכות הסינון
-                img.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg?r=${Math.random()}`;
+                tempPlayer = new YT.Player(testerId, {
+                    height: '10', width: '10', videoId: videoId,
+                    playerVars: { 'autoplay': 1, 'controls': 0, 'mute': 1, 'origin': window.location.origin },
+                    events: {
+                        'onReady': (event) => {
+                            event.target.playVideo();
+                        },
+                        'onError': () => {
+                            if (!isResolved) {
+                                isResolved = true;
+                                clearTimeout(timeout);
+                                checkIframeDOM();
+                            }
+                        },
+                        'onStateChange': (event) => {
+                            // אם הסרטון התחיל לנגן באופן תקין
+                            if ((event.data === 1 || event.data === 3) && !isResolved) {
+                                isResolved = true;
+                                clearTimeout(timeout);
+                                cleanup();
+                                resolve('unblocked'); // פתוח
+                            }
+                        }
+                    }
+                });
             });
         }
 
+        // עדכון התגים המעוצבים על הכרטיס בהתאם לתוצאה המדויקת
         function updateVideoCardNetfreeBadge(videoId, status) {
             const badge = document.getElementById(`netfree-badge-${videoId}`);
             if (!badge) return;
@@ -174,6 +227,9 @@
             } else if (status === 'blocked') {
                 badge.className = "absolute top-2 right-2 bg-rose-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
                 badge.innerHTML = '<i class="fas fa-ban"></i> חסום';
+            } else if (status === 'unchecked_netfree') {
+                badge.className = "absolute top-2 right-2 bg-amber-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
+                badge.innerHTML = '<i class="fas fa-clock"></i> נשלח לבדיקה';
             }
         }
 
@@ -181,10 +237,9 @@
             const badges = document.querySelectorAll('[id^="netfree-badge-"]');
             for (let badge of badges) {
                 const videoId = badge.id.replace('netfree-badge-', '');
-                if (badge.dataset.status === 'unchecked') {
-                    badge.innerHTML = '<i class="fas fa-spinner animate-spin"></i>';
-                    // קריאה לפונקציה החדשה שאינה צורכת API
-                    const status = await testVideoNetfreeStatusNoAPI(videoId);
+                if (badge.dataset.status === 'initial') {
+                    badge.innerHTML = '<i class="fas fa-spinner animate-spin text-[10px]"></i>';
+                    const status = await testVideoNetfreeStatus(videoId);
                     badge.dataset.status = status;
                     updateVideoCardNetfreeBadge(videoId, status);
                 }
@@ -333,7 +388,8 @@
 
                 if (kind === 'youtube#video' || isPopularChart) {
                     actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
-                    badgeHtml = `<div id="netfree-badge-${id}" data-status="unchecked" class="absolute top-2 right-2 bg-amber-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טרם נבדק</div>`;
+                    // סטטוס התחלתי נייטרלי: "טרם נבדק"
+                    badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טרם נבדק</div>`;
                 } else if (kind === 'youtube#playlist') {
                     actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
                 }
@@ -354,7 +410,7 @@
                 grid.appendChild(card);
             });
 
-            // בדיקת רקע חכמה שקטה מיד לאחר הרינדור
+            // הפעלת סריקת הרקע מיד לאחר הרינדור
             setTimeout(checkAllVisibleVideosNetfree, 400);
         }
 
