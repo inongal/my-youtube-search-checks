@@ -51,7 +51,8 @@
             </select>
         </div>
 
-        <div>
+        <div class="flex items-center gap-2">
+            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="בדוק את כל הסרטונים במסך הנוכחי מול נטפרי"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
             <button onclick="toggleConfig()" class="p-2 rounded-full text-zinc-400 hover:text-white" title="הגדרות API"><i class="fas fa-cog text-xl"></i></button>
         </div>
     </header>
@@ -94,7 +95,7 @@
                     <p id="modalStats" class="text-sm text-zinc-400 mt-1"></p>
                 </div>
                 <div class="flex gap-3">
-                    <button id="findPlaylistsBtn" onclick="findPlaylistsAndDisplayOnGrid()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="הצג פלייליסטים המכילים סרטון זה במסך הראשי">
+                    <button id="findPlaylistsBtn" onclick="findPlaylistsByTextNetfree()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="חפש פלייליסטים המכילים סרטון זה">
                         <i class="fas fa-search-location text-lg"></i>
                     </button>
                     <button onclick="const name = prompt('שם הפלייליסט אליו תרצה לשמור:'); if(name) PlaylistManager.addToPlaylist(name, appState.currentVideoDetails);" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="שמור לפלייליסט"><i class="fas fa-list-ul"></i></button>
@@ -114,6 +115,8 @@
             </div>
         </div>
     </div>
+
+    <div id="netfreeTesterContainer" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; opacity: 0;"></div>
 
     <script>
         let appState = { apiKey: localStorage.getItem('yt_api_key') || "", query: "", currentVideoId: null, currentVideoDetails: null };
@@ -136,40 +139,127 @@
             }
         };
 
-        // לוגיקת האיתור וההזרקה הישירה ל-resultsGrid במסך הראשי
-        async function findPlaylistsAndDisplayOnGrid() {
+        // --- לוגיקת בדיקת סטטוס חסימה מול נטפרי מאחורי הקלעים ---
+        function testVideoNetfreeStatus(videoId) {
+            return new Promise((resolve) => {
+                let isResolved = false;
+                
+                const testerId = 'tester-' + videoId;
+                const testerDiv = document.createElement('div');
+                testerDiv.id = testerId;
+                document.getElementById('netfreeTesterContainer').appendChild(testerDiv);
+
+                let tempPlayer;
+                
+                // הגדרת קו קטיעה (Timeout) של 2.5 שניות לזיהוי חסימה אם הנגן לא מגיב כלל
+                let timeout = setTimeout(() => {
+                    if (!isResolved) {
+                        isResolved = true;
+                        cleanupTester(tempPlayer, testerDiv);
+                        resolve('blocked'); // אם לא הגיב, כנראה חסום או שגיאת טעינה
+                    }
+                }, 2500);
+
+                function cleanupTester(playerInstance, divInstance) {
+                    if (playerInstance && typeof playerInstance.destroy === 'function') {
+                        try { playerInstance.destroy(); } catch(e){}
+                    }
+                    if (divInstance && divInstance.parentNode) divInstance.remove();
+                }
+
+                tempPlayer = new YT.Player(testerId, {
+                    height: '10', width: '10', videoId: videoId,
+                    playerVars: { 'autoplay': 1, 'controls': 0, 'mute': 1, 'origin': window.location.origin },
+                    events: {
+                        'onReady': (event) => {
+                            event.target.playVideo();
+                            
+                            // בדיקת כתובת פנימית מול חסימות נטפרי הידועות או דף הגשת פניות
+                            try {
+                                const currentUrl = event.target.getVideoUrl();
+                                if (currentUrl && (currentUrl.includes('netfree.link') || currentUrl.includes('tickets/new'))) {
+                                    isResolved = true;
+                                    clearTimeout(timeout);
+                                    cleanupTester(tempPlayer, testerDiv);
+                                    resolve('blocked');
+                                }
+                            } catch(e) {}
+                        },
+                        'onError': () => {
+                            if (!isResolved) {
+                                isResolved = true;
+                                clearTimeout(timeout);
+                                cleanupTester(tempPlayer, testerDiv);
+                                resolve('blocked');
+                            }
+                        },
+                        'onStateChange': (event) => {
+                            // מצב 1 (מנגן) או מצב 3 (בטעינת באפר) מעיד שהסרטון עובד ופתוח בשרת
+                            if ((event.data === 1 || event.data === 3) && !isResolved) {
+                                isResolved = true;
+                                clearTimeout(timeout);
+                                cleanupTester(tempPlayer, testerDiv);
+                                resolve('unblocked');
+                            }
+                        }
+                    }
+                });
+            });
+        }
+
+        // עדכון התג המעוצב על גבי כרטיס הסרטון במסך
+        function updateVideoCardNetfreeBadge(videoId, status) {
+            const badge = document.getElementById(`netfree-badge-${videoId}`);
+            if (!badge) return;
+
+            if (status === 'unblocked') {
+                badge.className = "absolute top-2 right-2 bg-emerald-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
+                badge.innerHTML = '<i class="fas fa-check-circle"></i> פתוח';
+            } else if (status === 'blocked') {
+                badge.className = "absolute top-2 right-2 bg-rose-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
+                badge.innerHTML = '<i class="fas fa-ban"></i> חסום';
+            }
+        }
+
+        // בדיקה אוטומטית / ידנית של כל הסרטונים המוצגים כעת על המסך
+        async function checkAllVisibleVideosNetfree() {
+            const badges = document.querySelectorAll('[id^="netfree-badge-"]');
+            for (let badge of badges) {
+                const videoId = badge.id.replace('netfree-badge-', '');
+                // בודק רק את אלו שעדיין בסטטוס "טרם נבדק"
+                if (badge.dataset.status === 'unchecked') {
+                    badge.innerHTML = '<i class="fas fa-spinner animate-spin"></i> בודק...';
+                    const status = await testVideoNetfreeStatus(videoId);
+                    badge.dataset.status = status;
+                    updateVideoCardNetfreeBadge(videoId, status);
+                }
+            }
+        }
+
+        async function findPlaylistsByTextNetfree() {
             if (!appState.currentVideoId || !appState.currentVideoDetails?.title) {
                 alert("מידע על הסרטון אינו זמין.");
                 return;
             }
-
             const videoTitle = appState.currentVideoDetails.title;
             const btn = document.getElementById('findPlaylistsBtn');
-            
             btn.innerHTML = '<i class="fas fa-spinner animate-spin text-lg"></i>';
             btn.disabled = true;
 
             try {
-                // קריאת חיפוש טקסטואלית לפלייליסטים
                 const searchQuery = `"${videoTitle}"`;
                 const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(searchQuery)}&maxResults=20&key=${appState.apiKey}`;
-                
                 const response = await fetch(searchUrl);
                 let data = await response.json();
                 
-                // אם החיפוש המדויק קשוח מדי, נבצע נפילה חזרה לחיפוש גמיש יותר
                 if (!data.items || data.items.length === 0) {
                     const fallbackUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(videoTitle)}&maxResults=12&key=${appState.apiKey}`;
                     const fallbackResponse = await fetch(fallbackUrl);
                     data = await fallbackResponse.json();
                 }
 
-                // סגירת הנגן כדי להציג את התוצאות שהתקבלו ברקע
                 closePlayer();
-
-                // עדכון כותרת המסך הראשי
                 document.getElementById('sectionTitle').innerText = `פלייליסטים המכילים את: ${videoTitle}`;
-                
                 const grid = document.getElementById('resultsGrid');
                 grid.innerHTML = '';
 
@@ -181,8 +271,6 @@
 
                         const card = document.createElement('div');
                         card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col border border-zinc-800 hover:border-zinc-700";
-                        
-                        // בלחיצה על כרטיס הפלייליסט הציבורי, המערכת תטען את הסרטונים שבתוכו למסך הראשי
                         card.setAttribute('onclick', `loadExternalPlaylistOnGrid('${playlistId}', '${snip.title.replace(/'/g, "\\'")}')`);
                         card.innerHTML = `
                             <div class="relative w-full aspect-video rounded-xl overflow-hidden mb-3 bg-zinc-800 flex items-center justify-center">
@@ -199,28 +287,22 @@
                 } else {
                     grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">לא נמצאו פלייליסטים ציבוריים התואמים לסרטון זה.</div>';
                 }
-
             } catch (error) {
-                console.error("Netfree tailored playlist rendering error:", error);
-                alert("אירעה שגיאה במהלך שליפת הנתונים.");
+                console.error(error);
             } finally {
                 btn.innerHTML = '<i class="fas fa-search-location text-lg"></i>';
                 btn.disabled = false;
             }
         }
 
-        // פונקציית עזר להצגת סרטונים מתוך פלייליסט שנבחר
         async function loadExternalPlaylistOnGrid(playlistId, title) {
             document.getElementById('sectionTitle').innerText = `פלייליסט: ${title}`;
             const grid = document.getElementById('resultsGrid');
             grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12 animate-pulse">טוען סרטונים מתוך הרשימה...</div>';
-
             try {
                 const res = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=25&playlistId=${playlistId}&key=${appState.apiKey}`);
                 const data = await res.json();
-
                 if (data.items && data.items.length > 0) {
-                    // המרת המבנה של פריטי פלייליסט למבנה תואם לפונקציית הרינדור הכללית
                     const formattedItems = data.items.map(item => ({
                         id: { kind: 'youtube#video', videoId: item.snippet.resourceId.videoId },
                         snippet: item.snippet
@@ -230,7 +312,6 @@
                     grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">הפלייליסט ריק או חסום לצפייה.</div>';
                 }
             } catch (error) {
-                console.error("Error loading playlist items:", error);
                 grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">שגיאה בטעינת סרטוני הרשימה.</div>';
             }
         }
@@ -290,11 +371,15 @@
                 const channelId = snip.channelId || "";
 
                 const card = document.createElement('div');
-                card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col";
+                card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col relative";
                 
                 let actionClick = "";
+                let badgeHtml = "";
+
                 if (kind === 'youtube#video' || isPopularChart) {
                     actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
+                    // הזרקת תג הסטטוס הראשוני: "טרם נבדק"
+                    badgeHtml = `<div id="netfree-badge-${id}" data-status="unchecked" class="absolute top-2 right-2 bg-amber-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טרם נבדק</div>`;
                 } else if (kind === 'youtube#playlist') {
                     actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
                 }
@@ -307,12 +392,16 @@
                         <div class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-bold flex items-center gap-1">
                             <i class="fas fa-list-ul"></i> פלייליסט
                         </div>` : ''}
+                        ${badgeHtml}
                     </div>
                     <h3 class="font-semibold text-sm line-clamp-2" style="color: var(--text-primary);">${snip.title}</h3>
                     <p class="text-xs text-zinc-400 mt-1">${snip.channelTitle}</p>
                 `;
                 grid.appendChild(card);
             });
+
+            // הפעלת בדיקת רקע חכמה אוטומטית לכל הסרטונים שרונדרו כעת על המסך
+            setTimeout(checkAllVisibleVideosNetfree, 400);
         }
 
         function openPlayer(id, title, thumb, channel, channelId) {
