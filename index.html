@@ -52,7 +52,7 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="סרוק ובדוק את כל הסרטונים המוצגים"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
+            <button onclick="checkAllVisibleVideosNetfree()" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition"><i class="fas fa-shield-alt ml-1"></i> בדוק את הדף</button>
             <button onclick="toggleConfig()" class="p-2 rounded-full text-zinc-400 hover:text-white" title="הגדרות API"><i class="fas fa-cog text-xl"></i></button>
         </div>
     </header>
@@ -139,15 +139,10 @@
             }
         };
 
-        // --- לוגיקת בדיקת נטפרי חכמה העוקפת לחלוטין את מגבלת ה-Cross-Origin ---
+        // --- פונקציית האיתור המדויקת שקוראת את ה-src החיצוני של ה-iframe בחלונית האלמנטים ---
         function testVideoNetfreeStatus(videoId) {
             return new Promise((resolve) => {
                 let isResolved = false;
-                
-                // בדיקה מקבילה עצמאית ומהירה מול שרת סינון התמונות של נטפרי (עובד ללא שגיאות קורס)
-                // נטפרי מחזירה סטטוסים שונים או תמונות ריקות בהתאם למצב האישור של הוידאו
-                const imgCheck = new Image();
-                imgCheck.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg?v=${Math.random()}`;
                 
                 const testerId = 'tester-' + videoId;
                 const testerDiv = document.createElement('div');
@@ -156,28 +151,46 @@
 
                 let tempPlayer;
                 
-                // טיימר חכם למקרה שאין תגובה מהנגן עקב דף החסימה של נטפרי
+                // הוספת טיימר של 2.5 שניות הממתין לעדכון ה-DOM החיצוני של ה-iframe על ידי מערכת נטפרי
                 let timeout = setTimeout(() => {
                     if (!isResolved) {
                         isResolved = true;
-                        cleanup();
-                        
-                        // פתרון מדויק: אם הנגן נחסם ולא הגיב, אנו בודקים בעזרת ה-Image האם התמונה נחסמה לחלוטין (deny) או שהיא מציגה את סמל ה"ממתין לבדיקה" של נטפרי
-                        if (imgCheck.complete && imgCheck.naturalWidth === 120 && imgCheck.naturalHeight === 90) {
-                            // נטפרי מחזירה תמונת ברירת מחדל קטנה בגודל קבוע (או חלופית) עבור סרטונים שטרם נבדקו
-                            resolve('unchecked_netfree');
-                        } else {
-                            // אם אין אינדיקציה הפוכה, וחלף הזמן ללא נגינה, הסרטון מסומן כחסום/לא מאושר
-                            resolve('blocked');
-                        }
+                        checkIframeSrcAttribute();
                     }
-                }, 2400);
+                }, 2500);
 
                 function cleanup() {
                     if (tempPlayer && typeof tempPlayer.destroy === 'function') {
                         try { tempPlayer.destroy(); } catch(e){}
                     }
                     if (testerDiv && testerDiv.parentNode) testerDiv.remove();
+                }
+
+                // הדרך להגיע למיקום המדויק של הכתובת כפי שמופיעה בלשונית Elements
+                function checkIframeSrcAttribute() {
+                    try {
+                        // איתור ה-iframe שיוטיוב יצר והחליף בתוך ה-container
+                        const iframeElement = testerDiv.querySelector('iframe');
+                        
+                        if (iframeElement) {
+                            // שליפת ה-src ישירות ממאפייני האלמנט בדף (עוקף חסימות אבטחת קורס פנימיות)
+                            const currentSrc = iframeElement.getAttribute('src') || iframeElement.src || '';
+                            
+                            // בדיקת המחרוזות הייעודיות של נטפרי שלמדתנו מצילומי המסך
+                            if (currentSrc.includes('unknown-video')) {
+                                cleanup();
+                                resolve('unchecked_netfree'); // "טרם נבדק"
+                                return;
+                            } else if (currentSrc.includes('deny') || currentSrc.includes('block') || currentSrc.includes('tickets/new')) {
+                                cleanup();
+                                resolve('blocked'); // "חסום"
+                                return;
+                            }
+                        }
+                    } catch(e) { console.error("Error reading DOM attribute:", e); }
+                    
+                    cleanup();
+                    resolve('blocked'); // ברירת מחדל בטוחה
                 }
 
                 tempPlayer = new YT.Player(testerId, {
@@ -191,18 +204,16 @@
                             if (!isResolved) {
                                 isResolved = true;
                                 clearTimeout(timeout);
-                                cleanup();
-                                // בשגיאת נגן מיידית, נבדוק אם זו חסימה סופית או זמנית
-                                resolve('blocked');
+                                checkIframeSrcAttribute();
                             }
                         },
                         'onStateChange': (event) => {
-                            // מצב 1 (מנגן) או מצב 3 (טעינה מוצלחת של יוטיוב) -> פתוח בנטפרי ב-100%
+                            // אם הסרטון התחיל לנגן בהצלחה (מצב 1 או 3) -> הוא פתוח ומאושר
                             if ((event.data === 1 || event.data === 3) && !isResolved) {
                                 isResolved = true;
                                 clearTimeout(timeout);
                                 cleanup();
-                                resolve('unblocked');
+                                resolve('unblocked'); // "פתוח"
                             }
                         }
                     }
@@ -221,7 +232,7 @@
                 badge.className = "absolute top-2 right-2 bg-rose-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
                 badge.innerHTML = '<i class="fas fa-ban"></i> חסום';
             } else if (status === 'unchecked_netfree') {
-                badge.className = "absolute top-2 right-2 bg-amber-500/95 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
+                badge.className = "absolute top-2 right-2 bg-amber-600/95 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
                 badge.innerHTML = '<i class="fas fa-clock"></i> טרם נבדק';
             }
         }
