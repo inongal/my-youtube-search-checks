@@ -3,115 +3,172 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Minimal Search Hub</title>
+    <title>YouTube</title>
+    
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://www.youtube.com/iframe_api"></script> 
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700&display=swap');
+        
         :root {
-            --bg-main: #0f0f0f; --bg-card: #1a1a1a; --bg-surface: #272727;
+            --bg-main: #0f0f0f; --bg-card: #1a1a1a; --bg-surface: #272727; --bg-surface-hover: #3f3f3f;
             --bg-input: #121212; --border-color: #333333; --border-light: #444444;
             --text-primary: #ffffff; --text-secondary: #aaaaaa; --text-muted: #777777;
             --modal-overlay: rgba(0, 0, 0, 0.9);
         }
-        body { background-color: var(--bg-main); color: var(--text-primary); font-family: 'Assistant', sans-serif; margin: 0; }
-        .video-card { transition: all 0.2s; border: 1px solid transparent; }
-        .video-card:hover img { transform: scale(1.02); border-radius: 8px; }
-        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+
+        [data-theme="light"] {
+            --bg-main: #f9f9f9; --bg-card: #ffffff; --bg-surface: #eeeeee; --bg-surface-hover: #dddddd;
+            --bg-input: #ffffff; --border-color: #cccccc; --border-light: #bbbbbb;
+            --text-primary: #111111; --text-secondary: #555555; --text-muted: #888888;
+            --modal-overlay: rgba(255, 255, 255, 0.85);
+        }
+
+        body { background-color: var(--bg-main); color: var(--text-primary); font-family: 'Assistant', sans-serif; margin: 0; overflow-x: hidden; transition: background-color 0.3s, color 0.3s; }
+        .nav-btn { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background-color: transparent; color: var(--text-primary); transition: all 0.2s; cursor: pointer; border: none; }
+        .nav-btn:hover { background-color: var(--bg-surface-hover); }
+        .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; background-color: transparent !important; }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: var(--bg-main); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 10px; }
-        .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-        .sidebar-item { display: flex; align-items: center; gap: 20px; padding: 12px; cursor: pointer; border-radius: 12px; transition: background 0.2s; }
-        .sidebar-item:hover, .sidebar-item.active { background: var(--bg-surface); }
-        #watchView { display: none; background-color: var(--modal-overlay); backdrop-filter: blur(12px); }
+        .video-card { transition: border-color 0.2s; border: 1px solid transparent; background-color: transparent; }
+        .video-card img { transition: transform 0.3s ease; }
+        .video-card:hover img { transform: scale(1.02); border-radius: 8px; }
+
+        #resultsGrid.list-view { display: flex; flex-direction: column; gap: 1rem; }
+        #resultsGrid.list-view .video-card { flex-direction: row; background: var(--bg-card); padding: 16px; border-radius: 16px; border: 1px solid var(--border-color); align-items: stretch; }
+        #resultsGrid.list-view .video-card > .relative { width: 280px; margin-bottom: 0; flex-shrink: 0; }
+        #resultsGrid.list-view .video-card .flex-1 { display: flex; flex-direction: column; padding-right: 20px; justify-content: center; }
+        
+        .selection-checkbox { display: none; }
+        body.selection-mode-active .selection-checkbox { display: flex; }
+        .video-card.selected-card { border-color: #3b82f6 !important; background-color: rgba(59, 130, 246, 0.05) !important; }
+
+        #watchView { display: none; backdrop-filter: blur(12px); background-color: var(--modal-overlay); }
         #watchView.active { display: flex !important; }
+        
+        .sidebar-item { display: flex; align-items: center; gap: 20px; padding: 12px; cursor: pointer; border-radius: 12px; transition: background 0.2s; color: var(--text-primary); }
+        .sidebar-item:hover { background: var(--bg-surface); }
+        .sidebar-item.active { background: var(--bg-surface); font-weight: 600; }
+        #mainSidebar { transition: width 0.3s ease, padding 0.3s ease; background-color: var(--bg-main); border-color: var(--border-color); }
+        
+        .sidebar-collapsed { width: 80px !important; padding: 16px 8px !important; }
+        .sidebar-collapsed .sidebar-item { justify-content: center; padding: 16px 0; gap: 0; }
+        .sidebar-collapsed .sidebar-item span { display: none; }
+        body.sidebar-is-collapsed #mainContent { margin-right: 80px !important; }
+
+        .copy-toast { visibility: hidden; background-color: #333; color: #fff; text-align: center; border-radius: 50px; padding: 10px 20px; position: fixed; z-index: 1000; bottom: 30px; left: 50%; transform: translateX(-50%); font-size: 14px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .copy-toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+        
+        select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23888888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e"); background-position: left 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em; padding-left: 2.5rem; }
+        @keyframes hue-shift { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }
+        .ai-btn-anim svg { animation: hue-shift 4s linear infinite; }
     </style>
 </head>
 <body class="custom-scrollbar">
 
     <header class="fixed top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-6 z-[100]" style="background-color: var(--bg-main); border-color: var(--border-color);">
-        <div class="flex items-center gap-5 cursor-pointer" onclick="loadHomePage()">
-            <i class="fab fa-youtube text-[#ff0000] text-3xl"></i>
-            <span class="text-xl font-bold tracking-tight">YouTube Hub</span>
+        <div class="flex items-center gap-5">
+            <button onclick="toggleSidebar()" class="text-xl p-2 rounded-full transition" style="color: var(--text-primary);"><i class="fas fa-bars"></i></button>
+            <div class="flex items-center gap-1 cursor-pointer" onclick="loadHomePage()">
+                <i class="fab fa-youtube text-[#ff0000] text-3xl"></i>
+                <span class="text-xl font-bold tracking-tight hidden md:inline" style="color: var(--text-primary);">YouTube</span>
+            </div>
         </div>
 
-        <div class="flex-1 max-w-2xl flex items-center gap-2 px-4">
+        <div class="flex items-center gap-2 mx-4" dir="ltr">
+            <button id="navBackBtn" class="nav-btn" onclick="handleHistoryNav(-1)" title="אחורה" disabled><i class="fas fa-arrow-left"></i></button>
+            <button id="navForwardBtn" class="nav-btn" onclick="handleHistoryNav(1)" title="קדימה" disabled><i class="fas fa-arrow-right"></i></button>
+        </div>
+
+        <div class="flex-1 max-w-5xl flex items-center gap-2 px-4 relative z-50">
             <div class="flex w-full group relative">
-                <input type="text" id="searchInput" placeholder="חיפוש או הדבקת קישור יוטיוב..." 
-                    class="w-full rounded-r-full py-2.5 px-5 outline-none text-right" style="background-color: var(--bg-input); border: 1px solid var(--border-color); border-left: none; color: var(--text-primary);">
-                <button onclick="performSearch()" class="border-r-0 rounded-l-full px-6 transition" style="background-color: var(--bg-surface); border: 1px solid var(--border-color);">
-                    <i class="fas fa-search" style="color: var(--text-secondary);"></i>
+                <input type="text" id="searchInput" autocomplete="off" placeholder="חיפוש או הדבקת קישור (סרטון/ערוץ/פלייליסט)" 
+                    class="w-full rounded-r-full py-2.5 px-5 outline-none transition text-right" style="background-color: var(--bg-input); border: 1px solid var(--border-color); border-left: none; color: var(--text-primary);">
+                <div id="autocomplete-results" class="custom-scrollbar shadow-lg absolute top-full mt-1 left-0 right-0 hidden rounded-2xl border overflow-y-auto max-h-64 z-50" style="background-color: var(--bg-card); border-color: var(--border-color);"></div>
+                
+                <button id="voiceSearchBtn" onclick="startVoiceSearch()" class="px-4 transition z-10 flex items-center justify-center" style="background-color: var(--bg-input); border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);"><i class="fas fa-microphone text-gray-500 hover:text-blue-500"></i></button>
+                <button id="aiSearchBtn" onclick="performGeminiSearch()" class="px-4 transition z-10 flex items-center justify-center ai-btn-anim" style="background-color: var(--bg-input); border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none"><path d="M12 24C12 17.3726 6.62742 12 0 12C6.62742 12 12 6.62742 12 0C12 6.62742 17.3726 12 24 12C17.3726 12 12 17.3726 12 24Z" fill="url(#gemini-gradient)"/><defs><linearGradient id="gemini-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#4285F4"/><stop offset="100%" stop-color="#9B72CB"/></linearGradient></defs></svg>
                 </button>
+                <button onclick="performSearch(false)" class="border-r-0 rounded-l-full px-6 transition z-10 flex items-center justify-center" style="background-color: var(--bg-surface); border: 1px solid var(--border-color);"><i class="fas fa-search" style="color: var(--text-secondary);"></i></button>
             </div>
-            <select id="searchType" class="text-sm rounded-lg p-2 outline-none bg-neutral-800 border border-zinc-700">
-                <option value="">הכל</option>
-                <option value="video">סרטונים</option>
-                <option value="channel">ערוצים</option>
-                <option value="playlist">פלייליסטים</option> 
+            
+            <select id="searchType" class="text-sm rounded-lg p-2.5 outline-none hidden md:block" style="background-color: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-primary);">
+                <option value="">הכל</option><option value="video">סרטונים</option><option value="channel">ערוצים</option><option value="playlist">פלייליסטים</option> 
             </select>
         </div>
 
-        <div class="flex items-center gap-2">
-            <button onclick="checkAllVisibleVideosNetfree(true)" class="p-2 px-3 text-xs font-bold rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="בצע סריקה ובדיקה מחודשת לכל הסרטונים המוצגים"><i class="fas fa-sync ml-1"></i> סרוק מחדש</button>
-            <button onclick="toggleConfig()" class="p-2 rounded-full text-zinc-400 hover:text-white" title="הגדרות API"><i class="fas fa-cog text-xl"></i></button>
+        <div class="flex items-center gap-4">
+            <button onclick="checkAllVisibleVideosNetfree(true)" class="px-4 py-2 rounded-full text-sm font-bold border transition flex items-center gap-2" style="background-color: var(--bg-surface); border-color: var(--border-light); color: var(--text-primary);"><i class="fas fa-sync text-blue-500"></i> סרוק דף מחדש</button>
+            <button onclick="toggleConfig()" class="p-2 rounded-full transition" style="color: var(--text-secondary);"><i class="fas fa-cog text-xl"></i></button>
         </div>
     </header>
 
     <div class="flex pt-16 min-h-screen">
-        <aside class="w-64 fixed right-0 top-16 bottom-0 flex flex-col p-4 overflow-y-auto border-l" style="border-color: var(--border-color);">
+        <aside id="mainSidebar" class="w-64 fixed right-0 top-16 bottom-0 hidden lg:flex flex-col overflow-y-auto custom-scrollbar border-l">
             <nav class="space-y-1">
-                <div onclick="loadHomePage()" class="sidebar-item active" id="navHome">
-                    <i class="fas fa-house text-lg"></i><span>דף הבית</span>
-                </div>
+                <div onclick="loadHomePage()" class="sidebar-item active" id="navHome"><i class="fas fa-house text-lg"></i><span>דף הבית</span></div>
                 <hr class="my-3" style="border-color: var(--border-color);">
-                <div class="text-xs font-bold text-gray-500 uppercase px-4 mb-2">הרשימות שלי</div>
+                <div onclick="loadLocalHistory()" class="sidebar-item" id="navLocalHistory"><i class="fas fa-history text-lg"></i><span>היסטוריה מקומית</span></div>
+                <div onclick="loadQueueTab()" class="sidebar-item" id="navQueue"><i class="fas fa-list-ol text-lg text-green-500"></i><span>תור השמעה</span></div>
+                <hr class="my-3" style="border-color: var(--border-color);">
+                <div class="px-4 py-2 text-xs font-bold uppercase" style="color: var(--text-muted);">הרשימות שלי</div>
                 <div id="playlistsNavContainer"></div>
-                <div onclick="const n=prompt('שם הרשימה החדשה:'); if(n) PlaylistManager.createPlaylist(n);" class="sidebar-item text-blue-500">
-                    <i class="fas fa-plus text-lg"></i><span>צור רשימה חדשה</span>
-                </div>
+                <div onclick="const n=prompt('שם הרשימה החדשה:'); if(n) PlaylistManager.createPlaylist(n);" class="sidebar-item text-blue-500"><i class="fas fa-plus text-lg"></i><span>צור רשימה חדשה</span></div>
             </nav>
         </aside>
 
-        <main class="flex-1 mr-64 p-6">
-            <h2 id="sectionTitle" class="text-2xl font-bold mb-6">סרטונים פופולריים</h2>
+        <main id="mainContent" class="flex-1 lg:mr-64 p-6 relative">
+            <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                <h2 id="sectionTitle" class="text-2xl font-bold" style="color: var(--text-primary);">סרטונים פופולריים</h2>
+            </div>
             <div id="resultsGrid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6"></div>
         </main>
     </div>
 
     <div id="watchView" class="fixed inset-0 z-[200] items-center justify-center p-4">
-        <div class="absolute inset-0" onclick="closePlayer()"></div>
-        <div class="relative w-full max-w-4xl rounded-2xl overflow-hidden flex flex-col border shadow-2xl z-10" style="background-color: var(--bg-main); border-color: var(--border-color);">
-            <div class="p-4 flex justify-between items-center border-b" style="border-color: var(--border-color);">
-                <h3 id="modalTitle" class="font-bold text-lg truncate flex-1 pl-4"></h3>
+        <div class="absolute inset-0 modal-overlay-bg" onclick="closePlayer()"></div>
+        <div class="player-container relative w-full max-w-5xl rounded-3xl overflow-hidden flex flex-col border shadow-2xl z-10" style="background-color: var(--bg-main); border-color: var(--border-color);">
+            <div class="player-header p-4 flex justify-between items-center border-b" style="border-color: var(--border-color);">
+                <h3 id="modalTitle" class="font-bold text-lg truncate px-2"></h3>
                 <button onclick="closePlayer()" class="text-zinc-400 hover:text-white text-xl px-2"><i class="fas fa-times"></i></button>
             </div>
-            <div class="aspect-video w-full bg-black">
-                <div id="playerFrame" class="w-full h-full"></div>
+            <div class="aspect-video w-full bg-black relative">
+                <div id="playerFrame" class="w-full h-full absolute inset-0"></div>
             </div>
-            
-            <div class="p-6 flex justify-between items-center bg-zinc-900">
+            <div class="p-6 bg-zinc-900 flex justify-between items-center player-info-section">
                 <div>
                     <h2 id="fullTitle" class="text-xl font-bold"></h2>
                     <p id="modalStats" class="text-sm text-zinc-400 mt-1"></p>
                 </div>
                 <div class="flex gap-3">
-                    <button id="findPlaylistsBtn" onclick="findPlaylistsByTextNetfree()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="חפש פלייליסטים המכילים סרטון זה">
+                    <button id="findPlaylistsBtn" onclick="findPlaylistsAndDisplayOnGrid()" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-blue-400 hover:bg-zinc-700 transition" title="הצג פלייליסטים המכילים סרטון זה במסך הראשי">
                         <i class="fas fa-search-location text-lg"></i>
                     </button>
-                    <button onclick="const name = prompt('שם הפלייליסט אליו תרצה לשמור:'); if(name) PlaylistManager.addToPlaylist(name, appState.currentVideoDetails);" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition" title="שמור לפלייליסט"><i class="fas fa-list-ul"></i></button>
+                    <button onclick="const name = prompt('שם הפלייליסט אליו תרצה לשמור:'); if(name) PlaylistManager.addToPlaylist(name, appState.currentVideoDetails);" class="w-10 h-10 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition"><i class="fas fa-list-ul"></i></button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="configModal" class="fixed inset-0 z-[300] hidden items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-        <div class="p-6 rounded-2xl w-full max-w-md bg-zinc-900 border border-zinc-800 text-right">
-            <h2 class="text-xl font-bold mb-4">הגדרות חיבור יוטיוב</h2>
-            <label class="block text-xs text-zinc-400 mb-2">YouTube Data API Key</label>
-            <input type="text" id="apiKeyInput" class="w-full bg-zinc-800 border border-zinc-700 rounded-xl py-2 px-4 mb-4 outline-none text-left" dir="ltr">
+    <div id="configModal" class="fixed inset-0 z-[300] hidden items-center justify-center p-4">
+        <div class="p-8 rounded-3xl w-full max-w-md border shadow-2xl bg-zinc-900 border-zinc-800 text-right">
+            <h2 class="text-2xl font-bold mb-4">הגדרות מערכת</h2>
+            <label class="block text-xs font-bold mb-2 text-zinc-400">YouTube Data API Key</label>
+            <input type="text" id="apiKeyInput" class="w-full text-left bg-zinc-800 border border-zinc-700 rounded-xl py-3 px-4 mb-4 outline-none">
+            <label class="block text-xs font-bold mb-2 text-zinc-400">Gemini API Key (לחיפוש חכם)</label>
+            <input type="text" id="geminiApiKeyInput" class="w-full text-left bg-zinc-800 border border-zinc-700 rounded-xl py-3 px-4 mb-4 outline-none">
             <div class="flex gap-3">
-                <button onclick="saveConfig()" class="flex-1 bg-white text-black py-2 rounded-xl font-bold transition hover:bg-zinc-200">שמור והפעל</button>
-                <button onclick="toggleConfig()" class="px-4 bg-zinc-800 text-white py-2 rounded-xl">ביטול</button>
+                <button onclick="saveAndStart()" class="flex-1 bg-white text-black py-3 rounded-xl font-bold transition hover:bg-zinc-200">שמור והפעל</button>
+                <button onclick="toggleConfig()" class="px-6 py-3 bg-zinc-800 text-white rounded-xl">ביטול</button>
             </div>
         </div>
     </div>
@@ -119,44 +176,32 @@
     <div id="netfreeTesterContainer" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; opacity: 0;"></div>
 
     <script>
-        let appState = { apiKey: localStorage.getItem('yt_api_key') || "", query: "", currentVideoId: null, currentVideoDetails: null };
+        let appState = { apiKey: localStorage.getItem('yt_api_key') || "", geminiApiKey: localStorage.getItem('yt_gemini_api_key') || "", query: "", pageToken: "", currentVideoId: null, currentVideoDetails: null, tempQueue: [], maxResults: 12, currentRenderedItems: [] };
         let ytPlayer = null;
 
         const PlaylistManager = {
             getPlaylists: () => JSON.parse(localStorage.getItem('yt_playlists') || '{"Watch Later": []}'),
             savePlaylists: (p) => { localStorage.setItem('yt_playlists', JSON.stringify(p)); loadPlaylistsToSidebar(); },
             createPlaylist: (name) => {
-                let p = PlaylistManager.getPlaylists();
-                if (p[name]) return alert('רשימה זו כבר קיימת');
+                let p = PlaylistManager.getPlaylists(); if (p[name]) return alert('רשימה זו כבר קיימת');
                 p[name] = []; PlaylistManager.savePlaylists(p);
             },
             addToPlaylist: (name, video) => {
-                let p = PlaylistManager.getPlaylists();
-                if (!p[name]) p[name] = [];
+                let p = PlaylistManager.getPlaylists(); if (!p[name]) p[name] = [];
                 if (p[name].some(v => v.id === video.id)) return alert('הסרטון כבר קיים ברשימה');
                 p[name].push(video); PlaylistManager.savePlaylists(p);
-                alert(`נוסף בהצלחה לרשימה: ${name}`);
             }
         };
 
-        // --- פונקציות ניהול זיכרון ה-Cache המקומי לסטטוסים ---
         const NetfreeCache = {
             getMap: () => JSON.parse(localStorage.getItem('yt_netfree_cache') || '{}'),
-            set: (id, status) => {
-                let map = NetfreeCache.getMap();
-                map[id] = status;
-                localStorage.setItem('yt_netfree_cache', JSON.stringify(map));
-            }
+            set: (id, status) => { let map = NetfreeCache.getMap(); map[id] = status; localStorage.setItem('yt_netfree_cache', JSON.stringify(map)); }
         };
 
-        // --- לוגיקת הבדיקה הדינמית בנגן עם פתרון הגודל הטקסטואלי העוקף קורס ---
+        // --- לוגיקת זיהוי חכמה ומדויקת מול קובצי ה-SVG של נטפרי בחלונית הבדיקה ---
         function testVideoNetfreeStatus(videoId) {
             return new Promise((resolve) => {
                 let isResolved = false;
-                
-                // טעינת בוחן תמונה אסינכרוני כדי לזהות מימדים במקרה של חסימה/המתנה
-                const imgCheck = new Image();
-                imgCheck.src = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg?v=${Math.random()}`;
                 
                 const testerId = 'tester-' + videoId;
                 const testerDiv = document.createElement('div');
@@ -164,28 +209,42 @@
                 document.getElementById('netfreeTesterContainer').appendChild(testerDiv);
 
                 let tempPlayer;
-                
+
+                // טיימר קטיעה של 2.5 שניות המאפשר ל-DOM להתעדכן במלואו
                 let timeout = setTimeout(() => {
                     if (!isResolved) {
                         isResolved = true;
-                        cleanup();
-                        
-                        // פילוח חכם ללא שגיאות קורס: סרטון שטרם נבדק מוחזר על ידי שרת נטפרי ברזולוציה קבועה של 120x90
-                        if (imgCheck.complete && imgCheck.naturalWidth === 120 && imgCheck.naturalHeight === 90) {
-                            NetfreeCache.set(videoId, 'unchecked_netfree');
-                            resolve('unchecked_netfree');
-                        } else {
-                            NetfreeCache.set(videoId, 'blocked');
-                            resolve('blocked');
-                        }
+                        checkIframeNetfreeDOM();
                     }
-                }, 2400);
+                }, 2500);
 
                 function cleanup() {
-                    if (tempPlayer && typeof tempPlayer.destroy === 'function') {
-                        try { tempPlayer.destroy(); } catch(e){}
-                    }
+                    if (tempPlayer && typeof tempPlayer.destroy === 'function') { try { tempPlayer.destroy(); } catch(e){} }
                     if (testerDiv && testerDiv.parentNode) testerDiv.remove();
+                }
+
+                function checkIframeNetfreeDOM() {
+                    try {
+                        const iframeElement = testerDiv.querySelector('iframe');
+                        if (iframeElement) {
+                            const srcUrl = iframeElement.getAttribute('src') || iframeElement.src || '';
+                            
+                            // בדיקה ישירה לפי הלוגיקה והמבנה המדויק של דפי נטפרי
+                            if (srcUrl.includes('unknown-video')) {
+                                cleanup();
+                                NetfreeCache.set(videoId, 'unchecked_netfree');
+                                resolve('unchecked_netfree');
+                                return;
+                            } else if (srcUrl.includes('deny') || srcUrl.includes('block') || srcUrl.includes('tickets/new')) {
+                                cleanup();
+                                NetfreeCache.set(videoId, 'blocked');
+                                resolve('blocked');
+                                return;
+                            }
+                        }
+                    } catch(e) { console.error(e); }
+                    cleanup();
+                    resolve('blocked');
                 }
 
                 tempPlayer = new YT.Player(testerId, {
@@ -194,19 +253,11 @@
                     events: {
                         'onReady': (event) => { event.target.playVideo(); },
                         'onError': () => {
-                            if (!isResolved) {
-                                isResolved = true;
-                                clearTimeout(timeout);
-                                cleanup();
-                                NetfreeCache.set(videoId, 'blocked');
-                                resolve('blocked');
-                            }
+                            if (!isResolved) { isResolved = true; clearTimeout(timeout); checkIframeNetfreeDOM(); }
                         },
                         'onStateChange': (event) => {
                             if ((event.data === 1 || event.data === 3) && !isResolved) {
-                                isResolved = true;
-                                clearTimeout(timeout);
-                                cleanup();
+                                isResolved = true; clearTimeout(timeout); cleanup();
                                 NetfreeCache.set(videoId, 'unblocked');
                                 resolve('unblocked');
                             }
@@ -219,7 +270,6 @@
         function updateVideoCardNetfreeBadge(videoId, status) {
             const badge = document.getElementById(`netfree-badge-${videoId}`);
             if (!badge) return;
-
             if (status === 'unblocked') {
                 badge.className = "absolute top-2 right-2 bg-emerald-600/90 text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1";
                 badge.innerHTML = '<i class="fas fa-check-circle"></i> פתוח';
@@ -235,17 +285,13 @@
         async function checkAllVisibleVideosNetfree(forceRefresh = false) {
             const badges = document.querySelectorAll('[id^="netfree-badge-"]');
             const cacheMap = NetfreeCache.getMap();
-
             for (let badge of badges) {
                 const videoId = badge.id.replace('netfree-badge-', '');
-                
-                // אם הסרטון כבר נבדק בעבר והוא שמור בזיכרון, נציג אותו מייד ולא נריץ שוב
                 if (!forceRefresh && cacheMap[videoId]) {
                     badge.dataset.status = cacheMap[videoId];
                     updateVideoCardNetfreeBadge(videoId, cacheMap[videoId]);
                     continue;
                 }
-
                 if (forceRefresh || badge.dataset.status === 'initial') {
                     badge.innerHTML = '<i class="fas fa-spinner animate-spin text-[10px]"></i>';
                     const status = await testVideoNetfreeStatus(videoId);
@@ -255,210 +301,119 @@
             }
         }
 
-        async function findPlaylistsByTextNetfree() {
-            if (!appState.currentVideoId || !appState.currentVideoDetails?.title) {
-                alert("מידע על הסרטון אינו זמין.");
-                return;
-            }
+        async function findPlaylistsAndDisplayOnGrid() {
+            if (!appState.currentVideoId || !appState.currentVideoDetails?.title) return;
             const videoTitle = appState.currentVideoDetails.title;
             const btn = document.getElementById('findPlaylistsBtn');
             btn.innerHTML = '<i class="fas fa-spinner animate-spin text-lg"></i>';
-            btn.disabled = true;
-
             try {
-                const searchQuery = `"${videoTitle}"`;
-                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(searchQuery)}&maxResults=20&key=${appState.apiKey}`;
-                const response = await fetch(searchUrl);
-                let data = await response.json();
-                
-                if (!data.items || data.items.length === 0) {
-                    const fallbackUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent(videoTitle)}&maxResults=12&key=${appState.apiKey}`;
-                    const fallbackResponse = await fetch(fallbackUrl);
-                    data = await fallbackResponse.json();
-                }
-
+                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=playlist&q=${encodeURIComponent('"' + videoTitle + '"')}&maxResults=12&key=${appState.apiKey}`;
+                const response = await fetch(searchUrl); const data = await response.json();
                 closePlayer();
                 document.getElementById('sectionTitle').innerText = `פלייליסטים המכילים את: ${videoTitle}`;
-                const grid = document.getElementById('resultsGrid');
-                grid.innerHTML = '';
-
+                const grid = document.getElementById('resultsGrid'); grid.innerHTML = '';
                 if (data.items && data.items.length > 0) {
                     data.items.forEach(item => {
-                        const snip = item.snippet;
-                        const playlistId = item.id.playlistId;
-                        const thumb = snip.thumbnails?.medium?.url || "";
-
+                        const snip = item.snippet; const playlistId = item.id.playlistId;
                         const card = document.createElement('div');
                         card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col border border-zinc-800 hover:border-zinc-700";
                         card.setAttribute('onclick', `loadExternalPlaylistOnGrid('${playlistId}', '${snip.title.replace(/'/g, "\\'")}')`);
                         card.innerHTML = `
                             <div class="relative w-full aspect-video rounded-xl overflow-hidden mb-3 bg-zinc-800 flex items-center justify-center">
-                                ${thumb ? `<img src="${thumb}" class="w-full h-full object-cover">` : '<i class="fas fa-list text-3xl text-zinc-600"></i>'}
-                                <div class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-bold flex items-center gap-1">
-                                    <i class="fas fa-list-ul"></i> פלייליסט
-                                </div>
+                                <img src="${snip.thumbnails?.medium?.url || ''}" class="w-full h-full object-cover">
+                                <div class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-bold"><i class="fas fa-list-ul"></i> פלייליסט</div>
                             </div>
-                            <h3 class="font-semibold text-sm line-clamp-2" style="color: var(--text-primary);">${snip.title}</h3>
+                            <h3 class="font-semibold text-sm line-clamp-2">${snip.title}</h3>
                             <p class="text-xs text-zinc-400 mt-1">מאת: ${snip.channelTitle}</p>
                         `;
                         grid.appendChild(card);
                     });
-                } else {
-                    grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">לא נמצאו פלייליסטים ציבוריים התואמים לסרטון זה.</div>';
-                }
-            } catch (error) {
-                console.error(error);
-            } finally {
-                btn.innerHTML = '<i class="fas fa-search-location text-lg"></i>';
-                btn.disabled = false;
-            }
+                } else { grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">לא נמצאו פלייליסטים.</div>'; }
+            } catch (e) { console.error(error); }
+            btn.innerHTML = '<i class="fas fa-search-location text-lg"></i>';
         }
 
         async function loadExternalPlaylistOnGrid(playlistId, title) {
             document.getElementById('sectionTitle').innerText = `פלייליסט: ${title}`;
-            const grid = document.getElementById('resultsGrid');
-            grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12 animate-pulse">טוען סרטונים מתוך הרשימה...</div>';
+            const grid = document.getElementById('resultsGrid'); grid.innerHTML = '';
             try {
                 const res = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=25&playlistId=${playlistId}&key=${appState.apiKey}`);
                 const data = await res.json();
-                if (data.items && data.items.length > 0) {
-                    const formattedItems = data.items.map(item => ({
-                        id: { kind: 'youtube#video', videoId: item.snippet.resourceId.videoId },
-                        snippet: item.snippet
-                    }));
-                    renderResults(formattedItems, false);
-                } else {
-                    grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-12">הפלייליסט ריק או חסום לצפייה.</div>';
+                if (data.items) {
+                    const formatted = data.items.map(item => ({ id: { kind: 'youtube#video', videoId: item.snippet.resourceId.videoId }, snippet: item.snippet }));
+                    renderResults(formatted, true);
                 }
-            } catch (error) {
-                grid.innerHTML = '<div class="col-span-full text-center text-red-500 py-12">שגיאה בטעינת סרטוני הרשימה.</div>';
-            }
-        }
-
-        function toggleConfig() {
-            const m = document.getElementById('configModal');
-            m.style.display = (m.style.display === 'flex') ? 'none' : 'flex';
-        }
-
-        function saveConfig() {
-            const k = document.getElementById('apiKeyInput').value.trim();
-            if(!k) return alert("אנא הזן מפתח API");
-            localStorage.setItem('yt_api_key', k); appState.apiKey = k;
-            toggleConfig(); loadHomePage();
+            } catch (e) {}
         }
 
         function loadPlaylistsToSidebar() {
-            const container = document.getElementById('playlistsNavContainer');
-            if(!container) return; container.innerHTML = '';
+            const container = document.getElementById('playlistsNavContainer'); if(!container) return; container.innerHTML = '';
             Object.keys(PlaylistManager.getPlaylists()).forEach(name => {
-                const div = document.createElement('div');
-                div.className = 'sidebar-item justify-between flex';
-                div.innerHTML = `<div class="flex items-center gap-3"><i class="fas fa-list text-sm text-zinc-500"></i><span>${name === 'Watch Later' ? 'צפייה בהמשך' : name}</span></div>`;
+                const div = document.createElement('div'); div.className = 'sidebar-item justify-between flex';
+                div.innerHTML = `<div class="flex items-center gap-3"><i class="fas fa-list text-sm text-zinc-500"></i><span>${name}</span></div>`;
                 container.appendChild(div);
             });
         }
 
         async function loadHomePage() {
             if(!appState.apiKey) return toggleConfig();
-            document.getElementById('sectionTitle').innerText = "סרטונים פופולריים בישראל";
             try {
                 const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&chart=mostPopular&regionCode=IL&maxResults=12&key=${appState.apiKey}`);
-                const data = await res.json();
-                renderResults(data.items || [], true);
+                const data = await res.json(); renderResults(data.items || [], true);
             } catch (err) { console.error(err); }
         }
 
         async function performSearch() {
-            const q = document.getElementById('searchInput').value.trim();
-            const type = document.getElementById('searchType').value || 'video,channel,playlist';
-            if(!q) return loadHomePage();
+            const q = document.getElementById('searchInput').value.trim(); if(!q) return loadHomePage();
             document.getElementById('sectionTitle').innerText = `תוצאות חיפוש עבור: ${q}`;
             try {
-                const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(q)}&type=${type}&key=${appState.apiKey}`);
-                const data = await res.json();
-                renderResults(data.items || [], false);
+                const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(q)}&type=video&key=${appState.apiKey}`);
+                const data = await res.json(); renderResults(data.items || [], false);
             } catch (err) { console.error(err); }
         }
 
-        function renderResults(items, isPopularChart) {
-            const grid = document.getElementById('resultsGrid'); grid.innerHTML = '';
+        function renderResults(items, clear) {
+            const grid = document.getElementById('resultsGrid'); if (clear) grid.innerHTML = '';
             const cacheMap = NetfreeCache.getMap();
-
             items.forEach(item => {
-                const snip = item.snippet;
-                const kind = item.id.kind || (isPopularChart ? 'youtube#video' : '');
-                const id = item.id.videoId || item.id.channelId || item.id.playlistId || item.id;
+                const snip = item.snippet; const id = item.id.videoId || item.id;
                 const thumb = snip.thumbnails?.medium?.url || "";
-                const channelId = snip.channelId || "";
-
                 const card = document.createElement('div');
                 card.className = "video-card bg-zinc-900 p-3 rounded-2xl cursor-pointer flex flex-col relative";
                 
-                let actionClick = "";
                 let badgeHtml = "";
-
-                if (kind === 'youtube#video' || isPopularChart) {
-                    actionClick = `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}', '${channelId}')`;
-                    
-                    // אם הסטטוס כבר קיים במאגר הזיכרון המקומי, נטעין אותו מיידית ללא המתנה לבדיקת הרקע
-                    if (cacheMap[id]) {
-                        const cachedStatus = cacheMap[id];
-                        let colorClass = "bg-zinc-700/90";
-                        let labelText = "טוען...";
-                        let iconClass = "fa-question-circle";
-
-                        if (cachedStatus === 'unblocked') { colorClass = "bg-emerald-600/90"; labelText = "פתוח"; iconClass = "fa-check-circle"; }
-                        else if (cachedStatus === 'blocked') { colorClass = "bg-rose-600/90"; labelText = "חסום"; iconClass = "fa-ban"; }
-                        else if (cachedStatus === 'unchecked_netfree') { colorClass = "bg-amber-600/95"; labelText = "טרם נבדק"; iconClass = "fa-clock"; }
-
-                        badgeHtml = `<div id="netfree-badge-${id}" data-status="${cachedStatus}" class="absolute top-2 right-2 ${colorClass} text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas ${iconClass}"></i> ${labelText}</div>`;
-                    } else {
-                        badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md flex items-center gap-1"><i class="fas fa-question-circle"></i> טוען...</div>`;
-                    }
-                } else if (kind === 'youtube#playlist') {
-                    actionClick = `loadExternalPlaylistOnGrid('${id}', '${snip.title.replace(/'/g, "\\'")}')`;
+                if (cacheMap[id]) {
+                    const status = cacheMap[id];
+                    let cls = "bg-zinc-700/90"; let lbl = "טוען...";
+                    if (status === 'unblocked') { cls = "bg-emerald-600/90"; lbl = "פתוח"; }
+                    else if (status === 'blocked') { cls = "bg-rose-600/90"; lbl = "חסום"; }
+                    else if (status === 'unchecked_netfree') { cls = "bg-amber-600/95"; lbl = "טרם נבדק"; }
+                    badgeHtml = `<div id="netfree-badge-${id}" data-status="${status}" class="absolute top-2 right-2 ${cls} text-white text-[11px] px-2 py-0.5 rounded font-bold shadow-md"><i class="fas fa-shield-alt"></i> ${lbl}</div>`;
+                } else {
+                    badgeHtml = `<div id="netfree-badge-${id}" data-status="initial" class="absolute top-2 right-2 bg-zinc-700/90 text-zinc-300 text-[11px] px-2 py-0.5 rounded font-bold shadow-md">טוען...</div>`;
                 }
 
-                card.setAttribute('onclick', actionClick);
-                card.innerHTML = `
-                    <div class="relative w-full aspect-video rounded-xl overflow-hidden mb-3 bg-zinc-800">
-                        <img src="${thumb}" class="w-full h-full object-cover">
-                        ${kind === 'youtube#playlist' ? `
-                        <div class="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-bold flex items-center gap-1">
-                            <i class="fas fa-list-ul"></i> פלייליסט
-                        </div>` : ''}
-                        ${badgeHtml}
-                    </div>
-                    <h3 class="font-semibold text-sm line-clamp-2" style="color: var(--text-primary);">${snip.title}</h3>
-                    <p class="text-xs text-zinc-400 mt-1">${snip.channelTitle}</p>
-                `;
+                card.setAttribute('onclick', `openPlayer('${id}', '${snip.title.replace(/'/g, "\\'")}', '${thumb}', '${snip.channelTitle.replace(/'/g, "\\'")}')`);
+                card.innerHTML = `<div class="relative w-full aspect-video rounded-xl overflow-hidden mb-3 bg-zinc-800"><img src="${thumb}" class="w-full h-full object-cover">${badgeHtml}</div><h3 class="font-semibold text-sm line-clamp-2">${snip.title}</h3><p class="text-xs text-zinc-400 mt-1">${snip.channelTitle}</p>`;
                 grid.appendChild(card);
             });
-
-            // הפעלת סריקת הרקע לסרטונים חדשים
             setTimeout(() => { checkAllVisibleVideosNetfree(false); }, 400);
         }
 
-        function openPlayer(id, title, thumb, channel, channelId) {
-            appState.currentVideoId = id;
-            appState.currentVideoDetails = { id, title, thumbnail: thumb, channel, channelId };
-            document.getElementById('modalTitle').innerText = title;
-            document.getElementById('fullTitle').innerText = title;
+        function openPlayer(id, title, thumb, channel) {
+            appState.currentVideoId = id; appState.currentVideoDetails = { id, title, thumbnail: thumb, channel };
+            document.getElementById('modalTitle').innerText = title; document.getElementById('fullTitle').innerText = title;
             document.getElementById('modalStats').innerText = channel;
-
             if (ytPlayer) { try { ytPlayer.destroy(); } catch(e){} }
             ytPlayer = new YT.Player('playerFrame', { height: '100%', width: '100%', videoId: id, playerVars: { 'autoplay': 1 } });
-            
             document.getElementById('watchView').classList.add('active');
         }
 
-        function closePlayer() {
-            if(ytPlayer) { try { ytPlayer.stopVideo(); } catch(e){} }
-            document.getElementById('watchView').classList.remove('active');
-            appState.currentVideoId = null;
-        }
-
-        window.onload = () => { loadPlaylistsToSidebar(); if(appState.apiKey) { loadHomePage(); document.getElementById('apiKeyInput').value = appState.apiKey; } else { toggleConfig(); } };
+        function closePlayer() { if(ytPlayer) { try { ytPlayer.stopVideo(); } catch(e){} } document.getElementById('watchView').classList.remove('active'); appState.currentVideoId = null; }
+        function toggleSidebar() { document.body.classList.toggle('sidebar-is-collapsed'); document.getElementById('mainSidebar').classList.toggle('sidebar-collapsed'); }
+        function toggleConfig() { const m = document.getElementById('configModal'); m.style.display = (m.style.display === 'flex') ? 'none' : 'flex'; }
+        function saveAndStart() { localStorage.setItem('yt_api_key', document.getElementById('apiKeyInput').value.trim()); localStorage.setItem('yt_gemini_api_key', document.getElementById('geminiApiKeyInput').value.trim()); location.reload(); }
+        window.onload = () => { loadPlaylistsToSidebar(); if(appState.apiKey) { loadHomePage(); document.getElementById('apiKeyInput').value = appState.apiKey; document.getElementById('geminiApiKeyInput').value = appState.geminiApiKey; } else { toggleConfig(); } };
     </script>
 </body>
 </html>
